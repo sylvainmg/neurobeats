@@ -1,0 +1,6 @@
+ollama
+yt-dlp
+sentence-transformers
+scikit-learn
+fastapi
+uvicorn

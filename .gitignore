@@ -1,0 +1,6 @@
+backend/.venv/
+__pycache__/
+*.pyc
+backend/neurobeats.db
+backend/stream_cache.json
+backend/*.bak

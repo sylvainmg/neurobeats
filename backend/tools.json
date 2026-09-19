@@ -1,0 +1,228 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "search_music",
+      "description": "Recherche de musique sur YouTube (liste de choix, SANS lecture). A utiliser quand la demande est vague ou sans verbe d'action. Retourne des videos avec video_id, title, channel, duration. Ne JAMAIS montrer les video_id a l'utilisateur.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Recherche libre (ex: Lil Nas X DONT WANT IT, jazz, Daft Punk)"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "default": 5,
+            "description": "Nombre de resultats (defaut 5)"
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "play_now",
+      "description": "Cherche ET joue immediatement en un seul appel. A utiliser quand l'utilisateur demande explicitement de jouer (lance, joue, mets, ecoute, demarre, play...). Joue le top resultat si assez specifique, sinon retourne des options a proposer.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Recherche libre (ex: Celine 3x Gazo)"
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "play_music",
+      "description": "Streame l'AUDIO d'une video YouTube en arriere-plan avec mpv (coupe la lecture en cours, loggue dans l'historique). N'accepte QUE les video_id retournes par search_music ou get_recommendation. Ne JAMAIS inventer d'ID.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "description": "ID YouTube 11 caracteres retourne par search_music (ex: dQw4w9WgXcQ)"
+          }
+        },
+        "required": ["video_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "play_choice",
+      "description": "Joue le N-ieme resultat (1-based) de la derniere recherche. A utiliser OBLIGATOIREMENT quand l'utilisateur repond par un numero ou ordinal ('le 1', '2', 'premier', 'dernier'...) apres une liste. Ne JAMAIS dire 'je joue' sans appeler ce tool.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Numero du choix dans la derniere liste (1 = premier)"
+          }
+        },
+        "required": ["index"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "stop_music",
+      "description": "Coupe la lecture audio en cours. Ne prend aucun parametre.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_playlist",
+      "description": "Cree une playlist intelligente : get_recommendation(mood) par lots de 3, 1 titre par artiste max. Sauvegarde dans le profil. A utiliser pour 'cree une playlist chill/rap/workout de N titres'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Nom de la playlist (ex: 'Workout rap')"
+          },
+          "mood": {
+            "type": "string",
+            "description": "Ambiance/genre (ex: 'rap fr', 'chill', 'dance')"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "default": 10,
+            "description": "Nombre de titres (defaut 10, max 30)"
+          }
+        },
+        "required": ["name", "mood"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "load_playlist",
+      "description": "Charge une playlist sauvegardee par son nom et lance le 1er titre. A utiliser pour 'lance/joue la playlist X'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Nom de la playlist"
+          }
+        },
+        "required": ["name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_recommendation",
+      "description": "Recommande 3 videos NON ecoutees via RAG (similarite au contexte) + Markov (genre predit) + decouverte 60/40. Passe le contexte (titre du moment, envie exprimee) en query. Retourne des video_id utilisables directement dans play_music. Ne prend aucun parametre obligatoire.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Contexte libre pour orienter la reco (ex: titre en cours, 'rap calme', 'comme Cartier de Gazo'). Vide = base sur le dernier titre ecoute."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "start_streaming",
+      "description": "Lance un flux musical infini : recommandations en boucle jouees automatiquement (gapless). A utiliser pour 'demarre un flux infini / la radio / en continu'. Si mood est un genre (ex: 'rap fr'), le flux ne joue QUE ce genre.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mood": {
+            "type": "string",
+            "description": "Ambiance/genre du flux (ex: 'rap fr'). Vide = base sur l'historique."
+          },
+          "force_genre": {
+            "type": "boolean",
+            "default": true,
+            "description": "true (defaut) : si mood est un genre connu, filtre dur sur ce genre."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "stop_streaming",
+      "description": "Stoppe le flux musical infini et coupe la lecture. A utiliser pour 'stoppe le flux / la radio'.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "skip_streaming",
+      "description": "Passe immediatement au titre suivant du flux infini (sans le couper). A utiliser pour 'suivant / skip / passe'.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_user_stats",
+      "description": "Stats d'ecoute reelles : genre/artiste preferes, creneau horaire favori, skips, duree moyenne. A utiliser pour 'mes stats / ce que j'ecoute / mes gouts'.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "store_preference",
+      "description": "Stocke la note (1-5) d'une video YouTube dans le profil utilisateur local.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "description": "ID YouTube obtenu via search_music"
+          },
+          "rating": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "Note de 1 a 5"
+          }
+        },
+        "required": ["video_id", "rating"]
+      }
+    }
+  }
+]
