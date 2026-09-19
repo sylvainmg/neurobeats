@@ -1,0 +1,15 @@
+# Dépendances et build
+node_modules/
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# Environnement
+.env*
+!.env.example
+
+# Logs et divers
+*.log
+.DS_Store

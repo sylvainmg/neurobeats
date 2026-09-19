@@ -1,3 +1,4 @@
+.opencode/
 backend/.venv/
 __pycache__/
 *.pyc
