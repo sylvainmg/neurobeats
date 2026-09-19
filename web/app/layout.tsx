@@ -10,7 +10,7 @@ import "./globals.css";
 // Inter : standard des plateformes de streaming en dark mode (proche de
 // la Circular de Spotify), lisible et neutre.
 const inter = Inter({
-  variable: "--font-sans",
+  variable: "--font-inter",
   subsets: ["latin"],
 });
 
