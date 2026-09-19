@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter } from "next/font/google";
 
 import { NowPlaying } from "@/components/layout/now-playing";
 import { Sidebar } from "@/components/layout/sidebar";
@@ -7,13 +7,10 @@ import { TopBar } from "@/components/layout/top-bar";
 
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+// Inter : standard des plateformes de streaming en dark mode (proche de
+// la Circular de Spotify), lisible et neutre.
+const inter = Inter({
+  variable: "--font-sans",
   subsets: ["latin"],
 });
 
@@ -26,7 +23,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="fr"
-      className={`${geistSans.variable} ${geistMono.variable} dark h-full antialiased`}
+      className={`${inter.variable} dark h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="bg-background text-foreground h-full">
