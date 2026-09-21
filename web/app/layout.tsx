@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 
-import { NowPlaying } from "@/components/layout/now-playing";
-import { Sidebar } from "@/components/layout/sidebar";
-import { TopBar } from "@/components/layout/top-bar";
-
+import { RealtimeProvider } from "@/lib/realtime";
+import { StoreProvider } from "@/lib/store";
 import "./globals.css";
 
 // Inter : standard des plateformes de streaming en dark mode (proche de
@@ -27,19 +25,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
     >
       <body className="bg-background text-foreground h-full">
-        {/* Structure Spotify : contenu scrollable + player bar fixe en bas */}
-        <div className="flex h-dvh flex-col gap-2 p-2">
-          <div className="flex min-h-0 flex-1 gap-2">
-            <Sidebar />
-            <main className="bg-card flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl">
-              <TopBar />
-              <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
-                {children}
-              </div>
-            </main>
-          </div>
-          <NowPlaying />
-        </div>
+        {/* Monté à la racine : la connexion (et donc la musique) survit à la
+            navigation, y compris vers les routes sans player (profil). */}
+        <RealtimeProvider>
+          <StoreProvider>{children}</StoreProvider>
+        </RealtimeProvider>
       </body>
     </html>
   );
