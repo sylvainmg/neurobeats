@@ -86,7 +86,14 @@ modifications
 
 **Règle d'or : 1 commit = 1 feature COMPLÈTE (validée + testée)**
 
-**Before commit :**
+**Règle absolue : ne JAMAIS commiter sans demande explicite.**
+
+Un agent ne commit, n'amende ni ne pousse de sa propre initiative. Il prépare
+et propose les changements ; le commit est une décision du développeur. Sans
+instruction claire (« commit », « commite », « commit ça »), le travail reste
+en working tree / non commité.
+
+**Before commit (une fois la demande reçue) :**
 
 1. ✅ Feature implémentée
 2. ✅ Tests lancés + pas de régression
@@ -94,7 +101,7 @@ modifications
 4. ✅ Documentation si nécessaire
 5. ✅ Code reviewable (pas 500 lignes mélangées)
 
-**Process :**
+**Process (sur demande uniquement) :**
 
 ```bash
 git add <files>
