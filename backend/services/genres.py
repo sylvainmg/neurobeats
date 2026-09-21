@@ -9,6 +9,10 @@ from core.config import MODEL
 from services.db_access import _db_ready
 from services.state import _tprint
 
+# Client avec timeout : le defaut du client est httpx.Timeout(timeout=None), donc
+# un Ollama qui pend bloquait indefiniment la reco (donc le remplissage de file).
+_OLLAMA = ollama.Client(timeout=30.0)
+
 # Mapping cure (chaines d'ARTISTES uniquement). Ne mapper QUE des artistes : les chaines
 # generiques (lyrics/paroles/compil, multi-artistes) vont dans GENERIC_CHANNELS -> "autre",
 # sinon elles captent les bonus Markov/stats sur toutes les requetes.
@@ -108,8 +112,8 @@ def infer_genre_ollama(title, channel):
         f"Reponds UNIQUEMENT par un genre parmi: {', '.join(GENRE_LABELS)}. Un seul mot."
     )
     try:
-        resp = ollama.chat(model=MODEL, messages=[{"role": "user", "content": prompt}],
-                           options={"temperature": 0})
+        resp = _OLLAMA.chat(model=MODEL, messages=[{"role": "user", "content": prompt}],
+                            options={"temperature": 0})
         genre = _parse_genre_label(resp["message"]["content"])
         _tprint(f"[genre-infer] {title[:35]!r} / {channel[:18]!r} → {genre}")
     except Exception as exc:
