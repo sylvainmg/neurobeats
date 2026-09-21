@@ -28,6 +28,65 @@ const EQ_BARS = [
   { delay: "270ms", duration: "1020ms" },
 ];
 
+/**
+ * Salutation selon l'heure locale.
+ *
+ * Les seuils reprennent les tranches du moteur (nuit jusqu'à 6 h, soir à partir
+ * de 18 h) : le titre parle ainsi le même langage que les statistiques d'écoute.
+ * Passé midi, « Bonjour » ne convient plus — d'où l'après-midi à part.
+ */
+function greetingAt(hour: number) {
+  if (hour < 6) return "Bonne nuit";
+  if (hour < 12) return "Bonjour";
+  if (hour < 18) return "Bon après-midi";
+  return "Bonsoir";
+}
+
+/**
+ * Titre de bienvenue, qui suit l'heure du navigateur.
+ *
+ * Le contrôle est calé sur l'heure pile suivante (minuterie recalculée après
+ * chaque bascule) et non sur un intervalle lancé au montage : le titre change au
+ * moment du passage d'une tranche à l'autre, pas jusqu'à une minute plus tard.
+ * Il est aussi refait au retour sur l'onglet, car un onglet en arrière-plan voit
+ * ses minuteries ralenties par le navigateur.
+ *
+ * Rendu aussi côté serveur : ici serveur et navigateur tournent sur la même
+ * machine, donc à la même heure. Si un client arrivait d'un autre fuseau, React
+ * réafficherait la valeur du navigateur — plutôt que de figer un titre faux, ce
+ * que ferait un `suppressHydrationWarning`.
+ */
+function Greeting() {
+  const [hour, setHour] = useState(() => new Date().getHours());
+
+  useEffect(() => {
+    let timer = 0;
+    const refresh = () => setHour(new Date().getHours());
+    const schedule = () => {
+      const now = new Date();
+      const next = new Date(now);
+      next.setHours(now.getHours() + 1, 0, 0, 0);
+      // +250 ms : on relit l'heure une fois la bascule réellement passée.
+      timer = window.setTimeout(() => {
+        refresh();
+        schedule();
+      }, next.getTime() - now.getTime() + 250);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+
+    schedule();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
+  return <>{greetingAt(hour)}</>;
+}
+
 function Equalizer() {
   return (
     <span aria-hidden="true" className="flex h-4 items-end gap-0.5">
@@ -170,7 +229,9 @@ export default function Home() {
   return (
     <div className="mx-auto max-w-5xl space-y-8 py-6">
       <header className="space-y-1">
-        <h1 className="text-3xl font-bold tracking-tight">Bonjour</h1>
+        <h1 className="text-3xl font-bold tracking-tight">
+          <Greeting />
+        </h1>
         {content?.intro ? (
           <p className="text-muted-foreground max-w-2xl text-sm">
             {content.intro}
