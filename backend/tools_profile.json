@@ -1,0 +1,253 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "search_music",
+      "description": "Recherche de musique sur YouTube (liste de choix, SANS lecture) : sert a retrouver le video_id d'un titre a noter, a mettre en favori ou a retirer de l'historique. Ne JAMAIS montrer les video_id a l'utilisateur.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Recherche libre."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "default": 5,
+            "description": "Nombre de resultats (defaut 5)"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_taste_summary",
+      "description": "Resume complet des gouts de l'utilisateur : genres/artistes preferes, creneau favori, skips, titres notes, artistes favoris, playlists (noms, artistes recurrents) et compteurs de donnees. A utiliser des que l'utilisateur parle de ses gouts, ses stats ou son profil.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_rated",
+      "description": "Liste les titres notes (etoiles) par l'utilisateur, du mieux note au moins bien note.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "store_preference",
+      "description": "Note un titre de 1 a 5 etoiles. Donne `video_id` si tu l'as deja (via search_music), SINON donne `title` (titre + artiste) : le moteur resout le titre lui-meme. Ne demande JAMAIS de video_id a l'utilisateur, il ne le connait pas. Une note >= 4 ajoute l'artiste aux favoris.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "description": "ID YouTube du titre a noter, si tu l'as deja"
+          },
+          "title": {
+            "type": "string",
+            "description": "Titre et artiste a noter, quand tu n'as pas de video_id (ex. 'DREAMBOY Lil Nas X')"
+          },
+          "rating": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "Note de 1 a 5"
+          }
+        },
+        "required": [
+          "rating"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "remove_rating",
+      "description": "Retire la note d'un titre (sans toucher a l'historique d'ecoute).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "description": "ID YouTube du titre dont on retire la note"
+          }
+        },
+        "required": [
+          "video_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_favorites",
+      "description": "Liste les artistes favoris de l'utilisateur.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "add_favorite",
+      "description": "Ajoute un artiste (chaine YouTube) aux favoris. A utiliser pour 'ajoute X a mes favoris'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "Nom de la chaine/artiste tel qu'il apparait dans les titres"
+          }
+        },
+        "required": [
+          "channel"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "remove_favorite",
+      "description": "Retire un artiste des favoris.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "Nom de la chaine/artiste a retirer"
+          }
+        },
+        "required": [
+          "channel"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_last_listen",
+      "description": "Supprime la derniere ecoute d'un titre dans l'historique. A utiliser pour 'supprime mon dernier X de mon historique'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "description": "ID YouTube du titre dont on retire la derniere ecoute"
+          }
+        },
+        "required": [
+          "video_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "clear_history",
+      "description": "Efface TOUT l'historique d'ecoute. Operation irreversible : demande d'abord confirmation a l'utilisateur, et n'appelle cet outil qu'apres un accord explicite (confirm=true).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean",
+            "description": "true uniquement apres accord explicite de l'utilisateur"
+          }
+        },
+        "required": [
+          "confirm"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_profile_name",
+      "description": "Met a jour le prenom et/ou le nom de l'utilisateur. Omettre un champ le laisse inchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "first_name": {
+            "type": "string",
+            "description": "Prenom"
+          },
+          "last_name": {
+            "type": "string",
+            "description": "Nom de famille"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_user_stats",
+      "description": "Statistiques d'ecoute : nombre d'ecoutes, genre/artiste preferes, creneau horaire favori, skips, duree moyenne.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_playlists",
+      "description": "Liste les playlists de l'utilisateur (nom, id, nombre de titres).",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_search",
+      "description": "Recherche des informations factuelles sur le web. A utiliser quand un fait doit etre verifie plutot que suppose. Retourne des extraits bruts (titre, url, extrait).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Requete de recherche."
+          },
+          "max_results": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "default": 5,
+            "description": "Nombre de resultats (defaut 5)"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  }
+]
