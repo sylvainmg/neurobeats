@@ -39,7 +39,7 @@ _cache_lock = threading.Lock()
 # --- Messages du thread timer (affiches hors input() cote CLI) ---
 TIMER_MSGS: "queue.Queue[str]" = queue.Queue()
 
-# --- Prefetch ---
+# --- Prefetch (resolution d'URL audio) ---
 _prefetch_exec = ThreadPoolExecutor(max_workers=2, thread_name_prefix="prefetch")
 _prefetch_cache: dict = {}
 
@@ -51,6 +51,10 @@ STREAMING_COUNT: int = 0
 STREAMING_THREAD: threading.Thread | None = None
 STREAMING_SKIP = threading.Event()
 STREAMING_MAX_TITLE_SECS = 10 * 60
+
+# --- Modes de lecture (file d'attente) ---
+SHUFFLE: bool = False       # ordre aleatoire des titres de la file
+REPEAT_MODE: str = "off"    # off | all | one ("one" = rejouer le titre courant)
 
 # --- Qualite reseau (mutable, partagee) ---
 NET_QUALITY = NET_QUALITY
