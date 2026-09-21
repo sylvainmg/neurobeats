@@ -599,10 +599,31 @@ def watchdog_alive() -> bool:
 
 
 def _watchdog_loop():
-    """Verifie periodiquement la taille de la file et la recharge si elle est basse."""
+    """Entretient la file, et relance l'enchainement s'il s'est arrete.
+
+    Deux roles : recharger la file quand elle est basse, et rattraper une boucle
+    de streaming morte alors que le flux est actif. Sans ce second filet, un
+    thread disparu laissait la lecture s'arreter a la fin du titre courant —
+    definitivement, puisque le mode flux restant vrai, plus rien ne relancait
+    l'enchainement (et un nouveau demarrage etait refuse : « deja en streaming »).
+    """
     while True:
         time.sleep(WATCH_INTERVAL)
         _maybe_refill()
+        _revive_streaming()
+
+
+def _revive_streaming():
+    """Relance la boucle de streaming si le flux est actif mais la boucle morte."""
+    if not state.STREAMING_MODE:
+        return
+    thread = state.STREAMING_THREAD
+    if thread is not None and thread.is_alive():
+        return
+    # Import local : streaming importe deja queue (cycle, sinon).
+    from services.streaming import _restart_loop
+    _say("boucle de streaming morte : relance")
+    _restart_loop(wait_current=False)
 
 
 def _maybe_refill(top_up: bool = False):

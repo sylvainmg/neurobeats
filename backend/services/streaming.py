@@ -5,7 +5,8 @@ import time
 
 from services import audiocache, state
 from services.audio import (
-    _ipc_send, _prefetch, _resolve_audio_url, _stop_player, is_paused, play_music,
+    _ipc_send, _prefetch, _resolve_audio_url, _stop_player, is_idle, is_paused,
+    play_music,
 )
 from services.db_access import _db_ready, hist_read
 from services import queue as play_queue
@@ -23,13 +24,27 @@ _AUTOSTART_LOCK = threading.Lock()
 
 
 def _stream_title_done() -> bool:
-    """True si le titre en cours est fini (eof) ou quasi-fini (time-pos >= duration - 1.5s)."""
+    """True si le titre en cours est fini : plus rien de charge, fin atteinte, ou
+    moins de 1,5 s de reste.
+
+    Le premier cas est celui qui compte en pratique, et il manquait : a la fin
+    d'un titre mpv **decharge** le fichier, et `eof-reached`, `time-pos` et
+    `duration` deviennent alors indisponibles (`pause` restant faux). Sans ce
+    test, la fin n'etait jamais vue : la boucle tombait sur sa garde de duree max
+    (10 min), la lecture s'arretait net file pleine, et les boutons de transport
+    se desactivaient cote client (`playing` faux).
+
+    Les sondes sont volontairement courtes : elles sont locales, et surtout une
+    sonde lente ferait rater la fenetre de 1,5 s qui precede la fin.
+    """
     try:
-        r = _ipc_send(["get_property", "eof-reached"], timeout=2.0)
+        if is_idle():
+            return True
+        r = _ipc_send(["get_property", "eof-reached"], timeout=1.0)
         if r and r.get("error") == "success" and r.get("data") is True:
             return True
-        pos = _ipc_send(["get_property", "time-pos"], timeout=2.0)
-        dur = _ipc_send(["get_property", "duration"], timeout=2.0)
+        pos = _ipc_send(["get_property", "time-pos"], timeout=1.0)
+        dur = _ipc_send(["get_property", "duration"], timeout=1.0)
         p = pos.get("data") if pos and pos.get("error") == "success" else None
         d = dur.get("data") if dur and dur.get("error") == "success" else None
         if isinstance(p, (int, float)) and isinstance(d, (int, float)) and d > 0 and p >= d - 1.5:

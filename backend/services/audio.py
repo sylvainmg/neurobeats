@@ -668,6 +668,25 @@ def is_paused() -> bool:
     r = _ipc_send(["get_property", "pause"], timeout=1.0)
     return bool(r and r.get("error") == "success" and r.get("data"))
 
+
+def is_idle() -> bool:
+    """True si mpv n'a plus aucun media charge (titre fini, flux casse, arret).
+
+    A la fin d'un titre, mpv decharge le fichier : `eof-reached`, `time-pos` et
+    `duration` deviennent alors *indisponibles*, et `pause` reste faux. Ce test est
+    donc le seul signal fiable pour savoir qu'un titre est termine — c'est ce qui
+    manquait pour enchainer sur le titre suivant.
+
+    Un daemon injoignable compte comme inactif (plus rien ne joue). En revanche une
+    reponse illisible ne vaut pas « inactif » : mieux vaut laisser la boucle
+    attendre que d'avancer sur un doute.
+    """
+    if not _mpv_ready():
+        return True
+    r = _ipc_send(["get_property", "idle-active"], timeout=1.0)
+    return bool(r and r.get("error") == "success" and r.get("data") is True)
+
+
 def toggle_pause() -> str:
     """Bascule pause/reprise de la lecture en cours (mpv IPC).
 
