@@ -1,11 +1,13 @@
 """Embeddings SentenceTransformer (singleton lazy) + cache SQLite."""
 import threading
+import time
 
 from services import state
 from services.db_access import _db_ready
 from services.state import _tprint
 
-_reco_model = None  # singleton lazy : charge (~5-12s) une seule fois, reuses ensuite
+MODEL_NAME = "all-MiniLM-L6-v2"
+_reco_model = None  # singleton lazy : charge une seule fois, reutilise ensuite
 _reco_model_lock = threading.Lock()  # evite le double chargement (warm-up + reco en parallele)
 
 
@@ -16,9 +18,31 @@ def _get_reco_model():
         with _reco_model_lock:
             if _reco_model is None:
                 from sentence_transformers import SentenceTransformer
-                print("  … calcul des affinites (1er appel, ~10s)…", flush=True)
-                _reco_model = SentenceTransformer("all-MiniLM-L6-v2")
+                t0 = time.perf_counter()
+                print("  … chargement du modele d'affinites (1er appel)…", flush=True)
+                try:
+                    # Modele deja telecharge : le charger en local evite le
+                    # controle de version reseau du Hub, qui representait
+                    # l'essentiel des ~10 s du premier appel — et donc de la
+                    # premiere construction de file, qui l'attendait.
+                    _reco_model = SentenceTransformer(MODEL_NAME, local_files_only=True)
+                except Exception:
+                    _reco_model = SentenceTransformer(MODEL_NAME)
+                print(f"  [embeddings] modele pret en {time.perf_counter() - t0:.1f}s",
+                      flush=True)
     return _reco_model
+
+
+def warm_reco_model():
+    """Charge le modele d'embeddings en tache de fond (chauffe au demarrage).
+
+    Appele par le lifespan AVANT tout travail de reco : la premiere construction
+    de file ne doit jamais payer le chargement du modele.
+    """
+    try:
+        _get_reco_model()
+    except Exception as exc:
+        _tprint(f"[embeddings] chauffe du modele echouee : {exc}")
 
 
 def _embed_texts(texts):
