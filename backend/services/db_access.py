@@ -65,6 +65,8 @@ def hist_append(video_id, title="", channel="", duration=None, genre=None):
         entry["duration"] = duration
     history.append(entry)
     save_json(f"{BASE}/music_history.json", history)
+    from core import db as _db
+    _db.bump_stats_rev()  # repli JSON : meme contrat de revision que SQLite
     return entry["timestamp"]
 
 
@@ -84,6 +86,23 @@ def profile_write(profile: dict):
         _db.db_profile_set(profile)
         return
     save_json(f"{BASE}/user_profile.json", profile)
+    from core import db as _db
+    _db.bump_profile_rev()  # repli JSON : meme contrat de revision que SQLite
+
+
+def recent_genre() -> str:
+    """Genre dominant des dernieres ecoutes (contexte de reco), "" si indetermine.
+
+    Semer une reco sur le titre exact du dernier morceau donne des resultats hors
+    sujet ; le genre cadre la selection et active le filtrage qualite du moteur.
+    Partages par l'accueil et Decouvrir.
+    """
+    rows = hist_read(20)
+    counts = Counter(
+        (r.get("genre") or "").strip() for r in rows if (r.get("genre") or "").strip()
+    )
+    counts.pop("autre", None)
+    return counts.most_common(1)[0][0] if counts else ""
 
 
 def get_user_stats() -> str:
