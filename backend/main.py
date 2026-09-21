@@ -7,6 +7,7 @@ Le moteur est dans services/ ; le CLI de reference dans tests/.
 Lancement : python backend/main.py   (port NEUROBEATS_PORT, defaut 8000)
            uvicorn backend.main:app  (depuis la racine)
 """
+import asyncio
 import os
 import sys
 import threading
@@ -22,17 +23,37 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from routers import (
-    chat, health, playback, playlists, recommendation, search, stats, streaming,
+    chat, discover, health, playback, playlists, profile, realtime,
+    recommendation, search, stats, streaming,
 )
+# Alias : `covers` designe deja le service (pochettes HQ) plus bas dans ce module.
+from routers import covers as covers_router
 from services.audio import (
-    _ipc_event_loop, _load_stream_cache, _shutdown_daemon, _stop_player,
+    _ipc_event_loop, _load_stream_cache, _prefill_queue, _shutdown_daemon,
+    _stop_player,
 )
 from services.db_access import _migrate_json_to_db
+from services.embeddings import warm_reco_model
+from services.home import warm_home
 from services.network import net_probe
 from services.recommendation import _cold_start_warmup
-from services import state
+from services import covers, state
 
 _bootstrapped = False
+
+
+def _boot_warmups():
+    """Warm-ups de fond, en serie : file de lecture, affinites, reseau.
+
+    En serie volontairement : la file est ce que l'utilisateur voit, elle passe
+    donc en premier, et les etapes suivantes ne viennent pas lui prendre son CPU
+    et sa bande passante.
+    """
+    for step in (_prefill_queue, _cold_start_warmup, net_probe):
+        try:
+            step()
+        except Exception as exc:
+            print(f"  [boot] warm-up {step.__name__} echoue : {exc}", flush=True)
 
 
 @asynccontextmanager
@@ -42,9 +63,21 @@ async def lifespan(_app: FastAPI):
     if not _bootstrapped:
         _migrate_json_to_db()
         _load_stream_cache()
+        # Pochettes HQ : reconstruit l'index disque (et purge ce qui est perime)
+        # avant que le client ne demande la moindre image.
+        covers.warm()
         threading.Thread(target=_ipc_event_loop, daemon=True).start()
-        threading.Thread(target=net_probe, daemon=True).start()
-        threading.Thread(target=_cold_start_warmup, daemon=True).start()
+        # Modele d'embeddings charge en premier : sans cela, la premiere
+        # construction de file (et le warm-up de reco) l'attendait ~10 s.
+        threading.Thread(target=warm_reco_model, daemon=True, name="warm-model").start()
+        # Warm-ups de fond ENCHAINES : la file de lecture d'abord (elle est
+        # visible a l'ecran), le reste ensuite. Lances en parallele, ils se
+        # disputaient CPU et reseau, ce qui allongeait nettement la file.
+        threading.Thread(target=_boot_warmups, daemon=True, name="boot-warmup").start()
+        # Contenu d'accueil (recos + habillage LLM) pret des l'ouverture du client.
+        warm_home()
+        # Diffusion temps reel + presence client (arret du flux si plus personne).
+        realtime.start(asyncio.get_running_loop())
         _bootstrapped = True
     port = os.environ.get("NEUROBEATS_PORT", "8000")
     print(f"[API] NeuroBeats backend prêt sur http://0.0.0.0:{port}", flush=True)
@@ -63,7 +96,8 @@ app.add_middleware(
 )
 
 for _router in (health, search, playback, recommendation, streaming,
-                playlists, chat, stats):
+                playlists, discover, profile, chat, stats, realtime,
+                covers_router):
     app.include_router(_router.router)
 
 
