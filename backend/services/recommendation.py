@@ -4,11 +4,12 @@ import re
 import threading
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from services import state
 from services.db_access import _db_ready, _meta, get_user_stats, hist_read, profile_read, profile_write
-from services.embeddings import _embed_texts, _embed_titles_cached
+from services.embeddings import _embed_titles_cached
 from services.genres import (
     GENERIC_CHANNELS, GENRE_LABELS, GENRE_SEARCH_TERMS, _JUNK_TITLE_RE,
     _genre_of, infer_genres_batch,
@@ -18,12 +19,45 @@ from services.rag import _rag_rank
 from services.state import _remember, _tokens, _tprint
 from services.youtube import youtube_search
 
+# Recherches YouTube menees en parallele pendant la recolte de candidats : les
+# appels yt-dlp sont independants, les enchainer coutait plusieurs secondes par
+# construction de file.
+_SEARCH_WORKERS = 4
 
-def store_preference(video_id: str, rating: int) -> str:
-    """Stocke la note (1-5) d'une video dans le profil utilisateur."""
-    meta = state.LAST_SEARCH.get(video_id) or _meta(video_id)
-    if meta is None:
-        return json.dumps({"error": f"video_id '{video_id}' inconnu. Appelle d'abord search_music."}, ensure_ascii=False)
+
+def store_preference(video_id: str = "", rating: int = 0, title: str = "") -> str:
+    """Stocke la note (1-5) d'une video dans le profil utilisateur.
+
+    `video_id` peut etre omis si `title` est fourni : on resout alors le titre
+    par une recherche YouTube. L'assistant n'a donc jamais a demander un
+    identifiant a l'utilisateur (il ne le connait pas).
+    """
+    try:
+        rating = int(rating)
+    except (TypeError, ValueError):
+        return json.dumps({"error": f"Note invalide '{rating}' (attendu : 1 a 5)."},
+                          ensure_ascii=False)
+    if not 1 <= rating <= 5:
+        return json.dumps({"error": f"Note invalide '{rating}' (attendu : 1 a 5)."},
+                          ensure_ascii=False)
+    meta = None
+    if video_id:
+        meta = state.LAST_SEARCH.get(video_id) or _meta(video_id)
+    elif title.strip():
+        try:
+            hits = youtube_search(title.strip(), 1)
+        except Exception as exc:
+            return json.dumps({"error": f"Recherche YouTube echouee : {exc}"}, ensure_ascii=False)
+        if not hits:
+            return json.dumps({"error": f"Aucun titre trouve pour « {title} »."},
+                              ensure_ascii=False)
+        meta = hits[0]
+        video_id = meta["video_id"]
+        _remember(video_id, meta.get("title", ""), meta.get("channel", ""))
+    if meta is None or not video_id:
+        return json.dumps(
+            {"error": "Precise un video_id (via search_music) ou un title a noter."},
+            ensure_ascii=False)
     profile = profile_read()
     profile["preferences"][video_id] = {
         "rating": rating, "title": meta.get("title", ""), "channel": meta.get("channel", "")
@@ -32,7 +66,9 @@ def store_preference(video_id: str, rating: int) -> str:
         if meta["channel"] not in profile["genres_favoris"]:
             profile["genres_favoris"].append(meta["channel"])
     profile_write(profile)
-    return json.dumps({"status": "stored", "video_id": video_id, "rating": rating}, ensure_ascii=False)
+    return json.dumps({"status": "stored", "video_id": video_id, "rating": rating,
+                       "title": meta.get("title", ""), "channel": meta.get("channel", "")},
+                      ensure_ascii=False)
 
 
 def _cold_start_warmup():
@@ -90,17 +126,22 @@ _RECO_FILLER = {
 }
 
 
-def get_recommendation(query: str = "", force_genre_filter: bool = False) -> str:
-    """Retourne 3 videos non ecoutees a partir du contexte et de l'historique.
+def get_recommendation(query: str = "", force_genre_filter: bool = False,
+                       count: int = 3) -> str:
+    """Retourne jusqu'a `count` videos non ecoutees a partir du contexte et de l'historique.
 
     Combine un classement RAG (similarite au contexte), une prediction Markov O2 du
     genre suivant et les stats d'ecoute (genre/artiste preferes, penalite skip, creneau
-    horaire). Le resultat est filtre pour exclure les 20 dernieres ecoutes.
+    horaire). Les notes ★ et les titres mis en playlist pesent aussi dans le classement.
+    Le resultat est filtre pour exclure les 20 dernieres ecoutes.
 
     Args:
         query: Contexte libre (titre, envie, genre). Vide utilise le dernier ecoute.
         force_genre_filter: Si True et query est un genre connu (ex. 'rap fr'),
             restreint la reco a ce genre (utilise par le streaming et les playlists).
+        count: Nombre de titres vises. La file de lecture en demande plusieurs d'un
+            coup : chaque appel a un cout fixe (SQLite, RAG, encodage), donc grouper
+            les titres reduit fortement le temps de construction de la file.
 
     Returns:
         JSON : {based_on, markov_genre, recommendations[...], warning?}.
@@ -109,6 +150,30 @@ def get_recommendation(query: str = "", force_genre_filter: bool = False) -> str
     profile = profile_read()
     if not history and not profile.get("preferences"):
         return json.dumps({"error": "Aucun historique. Ecoute d'abord de la musique via search_music + play_music."}, ensure_ascii=False)
+    # Notes attribuees par l'utilisateur : elles pesent dans le classement (bonus
+    # des artistes aimes, penalite des artistes peu notes) et excluent les titres
+    # explicitement rejetes.
+    prefs = profile.get("preferences", {}) or {}
+    disliked_ids = {
+        vid for vid, pref in prefs.items()
+        if int((pref or {}).get("rating", 0) or 0) <= 2
+    }
+    rated_channels: dict = {}
+    for pref in prefs.values():
+        channel = (pref or {}).get("channel")
+        rating = int((pref or {}).get("rating", 0) or 0)
+        if channel and rating:
+            rated_channels.setdefault(channel, []).append(rating)
+    # Mise en playlist : chaque titre que l'utilisateur garde dans une playlist est
+    # un signal d'affinite pour sa chaine (plus faible qu'une note ★, proportionnel
+    # au nombre de titres). Derive du contenu, donc suit ajouts ET retraits sans etat
+    # separe a maintenir.
+    playlist_channels: dict = {}
+    for playlist in profile.get("playlists", []) or []:
+        for song in (playlist or {}).get("songs") or []:
+            channel = (song or {}).get("channel")
+            if channel:
+                playlist_channels[channel] = playlist_channels.get(channel, 0) + 1
     # Stats d'ecoute (SQLite si dispo) : pilotent les bonus et penalites ci-dessous.
     try:
         ustats = json.loads(get_user_stats())
@@ -218,22 +283,43 @@ def get_recommendation(query: str = "", force_genre_filter: bool = False) -> str
             if c not in terms]
 
     def _collect(terms_list, target, pool):
-        for term in terms_list:
-            if len(pool) >= target:
-                break
+        """Recolte des candidats sur plusieurs termes, en parallele.
+
+        Les recherches yt-dlp sont des appels reseau independants : les enchainer
+        faisait payer plusieurs secondes a la construction de la file. On les
+        lance 4 par 4 et on s'arrete des que le pool est plein.
+        """
+        online = True
+        lock = threading.Lock()
+
+        def _one(term):
+            nonlocal online
             try:
-                for r in youtube_search(term, 8):
+                found = youtube_search(term, 8)
+            except Exception as exc:
+                _tprint(f"[offline-mode] ytsearch '{term[:30]}' indisponible : {str(exc)[:80]}")
+                with lock:
+                    online = False
+                return
+            with lock:
+                for r in found:
+                    if len(pool) >= target:
+                        return
                     vid = r["video_id"]
-                    if vid in listened or vid in recent or vid in seen:
+                    if vid in listened or vid in recent or vid in seen or vid in disliked_ids:
                         continue
                     seen.add(vid)
                     pool.append(r)
-            except Exception as exc:
-                _tprint(f"[offline-mode] ytsearch '{term[:30]}' indisponible : {str(exc)[:80]}")
-                return False
-        return True
 
-    online = _collect(terms, 16 if genre_target else 12, collected)
+        if not terms_list:
+            return online
+        with ThreadPoolExecutor(max_workers=_SEARCH_WORKERS) as ex:
+            list(ex.map(_one, terms_list))
+        return online
+
+    # Le vivier doit couvrir le nombre de titres demandes : le filtrage genre et
+    # la dedup en retirent une partie.
+    online = _collect(terms, max(16 if genre_target else 12, count * 4), collected)
     if genre_target and collected:
         collected = [r for r in collected if not _JUNK_TITLE_RE.search(r.get("title", "") or "")]
         genres = infer_genres_batch(collected)
@@ -254,11 +340,16 @@ def get_recommendation(query: str = "", force_genre_filter: bool = False) -> str
     wR, wM, wS = FUSION_WEIGHTS[fusion_ctx]
     import numpy as np
     fav_channels = {c for c, _ in Counter(h.get("channel") for h in history if h.get("channel")).most_common(5)}
+    # Les artistes mis en favori par une note ★ comptent autant que les plus ecoutes.
+    fav_channels |= set(profile.get("genres_favoris", []) or [])
     seed_words = set(_tokens(seed_text))
 
     def _score(cands):
         try:
-            emb = _embed_texts([seed_text] + [(c.get("title") or "") for c in cands])
+            # Encodage passe par le cache par video_id : les titres deja encodes
+            # ne le sont plus (le seed, lui, reste frais : texte libre).
+            emb = _embed_titles_cached([c.get("video_id") or "" for c in cands],
+                                       [(c.get("title") or "") for c in cands], seed_text)
             emb = np.asarray(emb[0] if isinstance(emb, tuple) else emb)
             cos = (emb[0] @ emb[1:].T).tolist()
         except Exception as exc:
@@ -281,8 +372,21 @@ def get_recommendation(query: str = "", force_genre_filter: bool = False) -> str
                 stats_n += 0.3
             if slot_boost_genre and g == slot_boost_genre:
                 stats_n += 0.2
+            # Notes ★ de l'utilisateur : un artiste aime remonte, un artiste
+            # mal note redescend (moyenne des notes de sa chaine).
+            channel_ratings = rated_channels.get(ch)
+            if channel_ratings:
+                average = sum(channel_ratings) / len(channel_ratings)
+                if average >= 4:
+                    stats_n += 0.3
+                elif average <= 2:
+                    stats_n -= 0.4
             if ch in skip_channels:
                 stats_n -= 0.5
+            # Mise en playlist : un artiste dont l'utilisateur garde des titres
+            # remonte (bonus modeste, borne, un cran sous une note ★).
+            if ch in playlist_channels:
+                stats_n += min(0.15 * playlist_channels[ch], 0.35)
             stats_n = min(max(stats_n, 0.0), 1.0)
             final = rn * wR + markov_n * wM + stats_n * wS
             if ch in GENERIC_CHANNELS:
@@ -295,8 +399,8 @@ def get_recommendation(query: str = "", force_genre_filter: bool = False) -> str
         return out
 
     scored = _score(collected)
-    # Filet : tant que < 3 exploitables, elargit (top-5 channels, 2e/3e match RAG, genre Markov)
-    if online and len(scored) < 3:
+    # Filet : tant que < count exploitables, elargit (top-5 channels, 2e/3e match RAG, genre Markov)
+    if online and len(scored) < count:
         extra_terms = []
         if genre_target:
             extra_terms += [c for c, _ in Counter(
@@ -339,7 +443,7 @@ def get_recommendation(query: str = "", force_genre_filter: bool = False) -> str
             warn = "Mode hors-ligne : titres déjà écoutés (YouTube indisponible)."
         try:
             ranked = [(v, s) for v, s in _rag_rank(seed_text, stats)
-                      if v not in recent and (not genre_target or stats[v]["genre"] == genre_target)][:3]
+                      if v not in recent and (not genre_target or stats[v]["genre"] == genre_target)][:count]
         except Exception:
             ranked = []
         if not ranked:
@@ -369,7 +473,7 @@ def get_recommendation(query: str = "", force_genre_filter: bool = False) -> str
     scored = deduped
     picks, seen_genres, div_skips = [], set(), 0
     for s, is_fav, r in scored:
-        if len(picks) >= 3:
+        if len(picks) >= count:
             break
         g = r.get("genre") or _genre_of(r.get("channel", ""))
         if g in seen_genres and len(picks) < 2 and div_skips < 1 \
@@ -386,6 +490,6 @@ def get_recommendation(query: str = "", force_genre_filter: bool = False) -> str
            "recommendations": picks}
     if genre_target:
         out["genre_filter"] = genre_target
-    if len(picks) < 3:
+    if len(picks) < count:
         out["warning"] = f"Seulement {len(picks)} nouveauté(s) trouvée(s) — écoute plus de titres pour affiner."
     return json.dumps(out, ensure_ascii=False)
