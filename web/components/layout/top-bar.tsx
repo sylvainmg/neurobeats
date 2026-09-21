@@ -1,44 +1,38 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, User } from "lucide-react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { User } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { useStore } from "@/lib/store";
 
-/** Barre supérieure : navigation historique + accès profil, inspiration Spotify. */
+/**
+ * Barre supérieure : accès profil.
+ *
+ * Affiche la photo du profil quand il y en a une (même store que la page
+ * Profil : elle se met donc à jour dès que la photo change), sinon l'icône.
+ */
 export function TopBar() {
-  const router = useRouter();
+  const { profile } = useStore();
+  const avatar = profile?.identity?.avatar ?? "";
 
   return (
-    <header className="bg-background/80 sticky top-0 z-10 flex items-center justify-between gap-4 px-4 py-3 backdrop-blur">
-      <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Page précédente"
-          onClick={() => router.back()}
-          className="bg-surface text-muted-foreground hover:bg-surface-hover hover:text-foreground rounded-full"
-        >
-          <ChevronLeft />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Page suivante"
-          onClick={() => router.forward()}
-          className="bg-surface text-muted-foreground hover:bg-surface-hover hover:text-foreground rounded-full"
-        >
-          <ChevronRight />
-        </Button>
-      </div>
-
+    <header className="flex items-center justify-end px-4 py-3">
       <Button
+        asChild
         variant="ghost"
         size="icon-sm"
         aria-label="Profil"
-        className="bg-surface text-muted-foreground hover:bg-surface-hover hover:text-foreground rounded-full"
+        className="bg-surface text-muted-foreground hover:bg-surface-hover hover:text-foreground overflow-hidden rounded-full"
       >
-        <User />
+        <Link href="/profile">
+          {avatar ? (
+            // eslint-disable-next-line @next/next/no-img-element -- data URL locale, pas d'optimisation Next
+            <img src={avatar} alt="" className="size-full object-cover" />
+          ) : (
+            <User />
+          )}
+        </Link>
       </Button>
     </header>
   );
