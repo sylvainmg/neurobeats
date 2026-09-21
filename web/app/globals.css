@@ -126,6 +126,72 @@
   --sidebar-ring: oklch(0.55 0.24 258);
 }
 
+/* Entrée des listes (résultats de recherche) : montée courte, décalée par index.
+   Désactivée si l'utilisateur préfère réduire les animations. */
+@keyframes nb-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.nb-rise {
+  animation: nb-rise 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Confirmation de profil : apparait, se maintient, puis s'efface seule (la
+   suppression d'etat cote JS tombe juste apres la fin de l'animation). */
+@keyframes nb-notice {
+  0% {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  8% {
+    opacity: 1;
+    transform: none;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.nb-notice {
+  animation: nb-notice 4200ms ease-out both;
+}
+
+/* Egaliseur « en cours d'ecoute » : petites barres qui battent, depuis le bas.
+   Durees et decalages sont poses par barre cote composant (rendu organique). */
+@keyframes nb-eq {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+.nb-eq {
+  transform-origin: bottom;
+  animation: nb-eq 900ms ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nb-rise,
+  .nb-notice {
+    animation: none;
+  }
+  /* Mouvement supprime : l'egaliseur reste lisible, figé sur des hauteurs fixes. */
+  .nb-eq {
+    animation: none;
+    transform: scaleY(0.7);
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -135,5 +201,56 @@
   }
   html {
     @apply font-sans;
+  }
+
+  /* Aucune sélection de texte dans l'application (UI de type lecteur). */
+  * {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Exception : les conversations des assistants (global et goûts). Le sélecteur
+     descendant est nécessaire car la règle `*` ci-dessus fixe explicitement
+     `user-select` sur chaque élément (sinon l'héritage serait neutralisé). */
+  .nb-selectable,
+  .nb-selectable * {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  /* Surlignage de sélection : celui du navigateur se confondait avec les
+     surfaces sombres. Fond accentué + texte sombre pour un contraste franc,
+     partout (y compris sur les bulles de conversation). */
+  ::selection {
+    background-color: var(--accent);
+    color: var(--accent-foreground);
+  }
+
+  /* Scrollbar native (Firefox) : fine et discrète */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-surface-hover) transparent;
+  }
+
+  /* Scrollbar native (WebKit/Chromium) : fine, arrondie, s'intensifie au survol */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: oklch(0.7 0.015 255 / 22%);
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: oklch(0.7 0.015 255 / 45%);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
   }
 }
