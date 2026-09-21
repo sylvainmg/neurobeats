@@ -116,7 +116,12 @@ def play_now(query: str) -> str:
     score, n = _match_score(query, results[0].get("title", ""), results[0].get("channel", ""))
     if n >= 2 and score >= 0.6:
         print(f"  … trouvé : {results[0].get('title', '')}", flush=True)
-        return play_music(results[0]["video_id"])
+        res = json.loads(play_music(results[0]["video_id"]))
+        if res.get("status") == "playing":
+            # Auto-streaming : le flux infini demarre dans le genre du titre lance.
+            from services.audio import _autostart_after_play
+            _autostart_after_play(res.get("title", ""), res.get("channel", ""))
+        return json.dumps(res, ensure_ascii=False)
     return json.dumps({
         "error": "Requete trop vague pour lecture immediate, demande a l'utilisateur de choisir.",
         "options": results[:5],
