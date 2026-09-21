@@ -19,7 +19,9 @@
             "description": "Nombre de resultats (defaut 5)"
           }
         },
-        "required": ["query"]
+        "required": [
+          "query"
+        ]
       }
     }
   },
@@ -27,7 +29,7 @@
     "type": "function",
     "function": {
       "name": "play_now",
-      "description": "Cherche ET joue immediatement en un seul appel. A utiliser quand l'utilisateur demande explicitement de jouer (lance, joue, mets, ecoute, demarre, play...). Joue le top resultat si assez specifique, sinon retourne des options a proposer.",
+      "description": "Cherche ET joue immediatement en un seul appel. A utiliser quand l'utilisateur demande explicitement de jouer (lance, joue, mets, ecoute, demarre, play...). Joue le top resultat si assez specifique, sinon retourne des options a proposer. Enchaine ensuite automatiquement (flux infini) dans le genre du titre.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -36,7 +38,9 @@
             "description": "Recherche libre (ex: Celine 3x Gazo)"
           }
         },
-        "required": ["query"]
+        "required": [
+          "query"
+        ]
       }
     }
   },
@@ -53,7 +57,9 @@
             "description": "ID YouTube 11 caracteres retourne par search_music (ex: dQw4w9WgXcQ)"
           }
         },
-        "required": ["video_id"]
+        "required": [
+          "video_id"
+        ]
       }
     }
   },
@@ -61,7 +67,7 @@
     "type": "function",
     "function": {
       "name": "play_choice",
-      "description": "Joue le N-ieme resultat (1-based) de la derniere recherche. A utiliser OBLIGATOIREMENT quand l'utilisateur repond par un numero ou ordinal ('le 1', '2', 'premier', 'dernier'...) apres une liste. Ne JAMAIS dire 'je joue' sans appeler ce tool.",
+      "description": "Joue le N-ieme resultat (1-based) de la derniere recherche. A utiliser OBLIGATOIREMENT quand l'utilisateur repond par un numero ou ordinal ('le 1', '2', 'premier', 'dernier'...) apres une liste. Ne JAMAIS dire 'je joue' sans appeler ce tool. Enchaine ensuite automatiquement (flux infini) dans le genre du titre.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -72,7 +78,9 @@
             "description": "Numero du choix dans la derniere liste (1 = premier)"
           }
         },
-        "required": ["index"]
+        "required": [
+          "index"
+        ]
       }
     }
   },
@@ -111,7 +119,10 @@
             "description": "Nombre de titres (defaut 10, max 30)"
           }
         },
-        "required": ["name", "mood"]
+        "required": [
+          "name",
+          "mood"
+        ]
       }
     }
   },
@@ -128,7 +139,9 @@
             "description": "Nom de la playlist"
           }
         },
-        "required": ["name"]
+        "required": [
+          "name"
+        ]
       }
     }
   },
@@ -206,13 +219,17 @@
     "type": "function",
     "function": {
       "name": "store_preference",
-      "description": "Stocke la note (1-5) d'une video YouTube dans le profil utilisateur local.",
+      "description": "Note un titre de 1 a 5 etoiles. Donne `video_id` si tu l'as deja (via search_music), SINON donne `title` (titre + artiste) : le moteur resout le titre lui-meme. Ne demande JAMAIS de video_id a l'utilisateur. Une note >= 4 ajoute l'artiste aux favoris.",
       "parameters": {
         "type": "object",
         "properties": {
           "video_id": {
             "type": "string",
-            "description": "ID YouTube obtenu via search_music"
+            "description": "ID YouTube obtenu via search_music, si tu l'as deja"
+          },
+          "title": {
+            "type": "string",
+            "description": "Titre et artiste a noter, quand tu n'as pas de video_id (ex. 'DREAMBOY Lil Nas X')"
           },
           "rating": {
             "type": "integer",
@@ -221,7 +238,137 @@
             "description": "Note de 1 a 5"
           }
         },
-        "required": ["video_id", "rating"]
+        "required": [
+          "rating"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_playlists",
+      "description": "Liste les playlists de l'utilisateur (nom, id, nombre de titres). A utiliser avant de renommer, supprimer ou modifier une playlist, pour connaitre les noms exacts.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "rename_playlist",
+      "description": "Renomme une playlist existante. A utiliser pour 'renomme ma playlist X en Y'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "playlist": {
+            "type": "string",
+            "description": "Nom (ou id) de la playlist a renommer, tel que retourne par list_playlists"
+          },
+          "name": {
+            "type": "string",
+            "description": "Nouveau nom de la playlist"
+          }
+        },
+        "required": [
+          "playlist",
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_playlist",
+      "description": "Supprime definitivement une playlist. Confirme le nom avant d'appeler si le doute est possible.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "playlist": {
+            "type": "string",
+            "description": "Nom (ou id) de la playlist a supprimer"
+          }
+        },
+        "required": [
+          "playlist"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "add_track_to_playlist",
+      "description": "Ajoute un titre a une playlist. Le video_id doit venir de search_music ou get_recommendation : ne JAMAIS inventer d'ID.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "playlist": {
+            "type": "string",
+            "description": "Nom (ou id) de la playlist cible"
+          },
+          "video_id": {
+            "type": "string",
+            "description": "ID YouTube 11 caracteres obtenu via search_music"
+          }
+        },
+        "required": [
+          "playlist",
+          "video_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "remove_track_from_playlist",
+      "description": "Retire un titre d'une playlist. Utilise list_playlists puis le detail pour connaitre les titres presents.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "playlist": {
+            "type": "string",
+            "description": "Nom (ou id) de la playlist"
+          },
+          "video_id": {
+            "type": "string",
+            "description": "ID YouTube du titre a retirer"
+          }
+        },
+        "required": [
+          "playlist",
+          "video_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_search",
+      "description": "Recherche des informations factuelles sur le web. A utiliser quand un fait doit etre verifie plutot que suppose. Retourne des extraits bruts (titre, url, extrait).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Requete de recherche."
+          },
+          "max_results": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "default": 5,
+            "description": "Nombre de resultats (defaut 5)"
+          }
+        },
+        "required": [
+          "query"
+        ]
       }
     }
   }
