@@ -13,28 +13,22 @@ import {
 
 import {
   api,
-  type HistoryEntry,
   type RatedTrack,
   type UserProfile,
 } from "@/lib/api";
 import { useRealtime } from "@/lib/realtime";
-
-const HISTORY_PAGE = 60;
-const HISTORY_MAX = 500; // plafond de l'API /api/profile/history
 
 /**
  * Store unique des données du Profil — et des étoiles ★ de toute l'application.
  *
  * La vérité est côté serveur ; ce store n'en est qu'un miroir, et il se
  * resynchronise dès que le serveur signale un changement :
- *  - `statsRev`   : une écoute (historique + compteurs) ;
+ *  - `statsRev`   : compteurs et statistiques d'écoute ;
  *  - `profileRev` : une note, un favori, une playlist, l'identité.
  *
- * Conséquence : une action faite ailleurs (assistant, autre onglet, autre
- * appareil) se répercute ici sans rechargement. Aucun composant ne garde sa
- * propre copie : tout lit et écrit via ce store, sinon l'affichage peut mentir.
- * La reconnexion du WebSocket suffit à rattraper les événements manqués, le
- * snapshot renvoyant les révisions courantes.
+ * L'historique d'écoute n'en fait pas partie : le modal de la page Profil le
+ * charge lui-même, page par page (offset), pour ne jamais matérialiser tout en
+ * mémoire.
  */
 interface StoreValue {
   /** Identité, statistiques d'écoute et compteurs du profil. */
@@ -43,8 +37,6 @@ interface StoreValue {
   ratings: RatedTrack[];
   byId: Record<string, number>;
   favorites: string[];
-  history: HistoryEntry[];
-  historyLimit: number;
   loading: boolean;
   error: string | null;
   rate: (
@@ -52,9 +44,6 @@ interface StoreValue {
     rating: number,
   ) => Promise<void>;
   clearRating: (videoId: string) => Promise<void>;
-  ensureHistory: () => Promise<void>;
-  loadMoreHistory: () => Promise<void>;
-  resetHistory: () => Promise<void>;
   refresh: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -65,16 +54,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [ratings, setRatings] = useState<RatedTrack[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [historyLimit, setHistoryLimit] = useState(HISTORY_PAGE);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Numéro de vague : une réponse arrivée après un rechargement plus récent est
   // ignorée (évite qu'une requête lente écrase une donnée fraîche).
   const wave = useRef(0);
-  const limitRef = useRef(HISTORY_PAGE);
-  const historyLoaded = useRef(false);
   const { statsRev, profileRev } = useRealtime();
 
   const applyProfile = useCallback(async (mine: number) => {
@@ -104,16 +89,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const applyHistory = useCallback(async (mine: number) => {
-    try {
-      const data = await api.profileHistory(limitRef.current);
-      if (mine !== wave.current) return;
-      setHistory(data.entries ?? []);
-    } catch {
-      // Réseau indisponible : on garde ce qui est affiché.
-    }
-  }, []);
-
   /** Recharge les données du profil ; `withRatings` évite de recharger toutes
    * les notes quand seul un changement d'écoute a été signalé. */
   const resync = useCallback(
@@ -121,15 +96,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const mine = (wave.current += 1);
       await applyProfile(mine);
       if (withRatings) await applyRatings(mine);
-      if (historyLoaded.current) await applyHistory(mine);
       if (mine === wave.current) setLoading(false);
     },
-    [applyProfile, applyRatings, applyHistory],
+    [applyProfile, applyRatings],
   );
 
   const refresh = useCallback(() => resync(true), [resync]);
-  /** Rechargement ciblé : profil (identité, stats, compteurs) + historique, sans
-   * recharger toutes les notes quand elles ne sont pas concernées. */
+  /** Rechargement ciblé : profil (identité, stats, compteurs), sans recharger
+   * toutes les notes quand elles ne sont pas concernées. */
   const refreshProfile = useCallback(() => resync(false), [resync]);
 
   // Chargement initial.
@@ -194,28 +168,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [resync],
   );
 
-  const ensureHistory = useCallback(async () => {
-    if (historyLoaded.current) return;
-    historyLoaded.current = true;
-    await applyHistory(wave.current);
-  }, [applyHistory]);
-
-  const loadMoreHistory = useCallback(async () => {
-    const next = Math.min(limitRef.current + HISTORY_PAGE, HISTORY_MAX);
-    if (next === limitRef.current) return;
-    limitRef.current = next;
-    setHistoryLimit(next);
-    historyLoaded.current = true;
-    await applyHistory(wave.current);
-  }, [applyHistory]);
-
-  const resetHistory = useCallback(async () => {
-    limitRef.current = HISTORY_PAGE;
-    setHistoryLimit(HISTORY_PAGE);
-    historyLoaded.current = true;
-    await applyHistory(wave.current);
-  }, [applyHistory]);
-
   const byId = useMemo(() => {
     const map: Record<string, number> = {};
     for (const rated of ratings) map[rated.video_id] = rated.rating;
@@ -228,15 +180,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ratings,
       byId,
       favorites,
-      history,
-      historyLimit,
       loading,
       error,
       rate,
       clearRating,
-      ensureHistory,
-      loadMoreHistory,
-      resetHistory,
       refresh,
       refreshProfile,
     }),
@@ -245,15 +192,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ratings,
       byId,
       favorites,
-      history,
-      historyLimit,
       loading,
       error,
       rate,
       clearRating,
-      ensureHistory,
-      loadMoreHistory,
-      resetHistory,
       refresh,
       refreshProfile,
     ],

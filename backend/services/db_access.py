@@ -129,7 +129,10 @@ def get_user_stats() -> str:
 def _meta(video_id):
     if video_id in state.KNOWN:
         return {"video_id": video_id, **state.KNOWN[video_id]}
-    for h in hist_read(500):
+    # Toute la fenetre, pas seulement les recents : le modal historique expose
+    # les anciennes ecoutes, et une relecture legitime ne doit pas etre refusee
+    # parce que le titre est sorti des 500 dernieres.
+    for h in hist_read(5000):
         if h.get("video_id") == video_id:
             _remember(video_id, h.get("title", ""), h.get("channel", ""))
             return {"video_id": video_id, "title": h.get("title", ""), "channel": h.get("channel", "")}

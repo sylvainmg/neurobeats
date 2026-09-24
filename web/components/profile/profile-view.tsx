@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  BrainCircuit,
   ChevronDown,
   ChevronUp,
   Clock,
@@ -32,11 +33,13 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AvatarPicker } from "@/components/profile/avatar-picker";
+import { AiSettingsForm } from "@/components/profile/ai-settings";
+import { HistoryDialog } from "@/components/profile/history-dialog";
 import { IdentityDialog } from "@/components/profile/identity-dialog";
 import { TasteAssistant } from "@/components/profile/taste-assistant";
 import { Rating } from "@/components/layout/rating";
 import { TrackCover } from "@/components/track-cover";
-import { api, type HistoryEntry } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { coverSizes } from "@/lib/track";
 import { cn } from "cn";
@@ -46,6 +49,7 @@ const TABS = [
   { id: "identite", label: "Identité", icon: User },
   { id: "statistiques", label: "Statistiques", icon: Music2 },
   { id: "assistant", label: "Assistant", icon: Sparkles },
+  { id: "ia", label: "IA", icon: BrainCircuit },
   { id: "donnees", label: "Données", icon: Database },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
@@ -58,82 +62,11 @@ function normalize(value: string): string {
     .toLowerCase();
 }
 
-// Listes potentiellement longues (milliers d'entrées) : on n'affiche qu'un
-// apercu tant que la section n'est pas depliee, et le corps deplie reste borne
-// par un scroll interne — la page garde une hauteur maitrisee.
-const HISTORY_PREVIEW = 12;
+// Listes de notes potentiellement longues : apercu tant que la section n'est pas
+// depliee, rendu par paliers (le DOM ne recoit jamais toute la liste d'un coup).
 const RATINGS_PREVIEW = 6;
-const HISTORY_PAGE = 60;
-const HISTORY_MAX = 500; // plafond de l'API /api/profile/history
-// Palier de rendu des notes : le DOM ne recoit jamais toute la liste d'un coup
-// (les notes sont chargees en entier pour l'app, mais rendues par tranches).
 const RATINGS_PAGE = 24;
 const NOTICE_MS = 4300; // juste apres la fin de l'animation nb-notice (4200 ms)
-
-/** Heure de l'écoute, affichée au survol d'une vignette d'historique. */
-function formatHour(iso?: string): string {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString("fr-FR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-interface HistoryGroup {
-  key: string;
-  label: string;
-  items: HistoryEntry[];
-}
-
-/**
- * Regroupe les écoutes par journée (du plus récent au plus ancien).
- *
- * Un historique plat ne dit rien : la journée donne le rythme (aujourd'hui, hier,
- * puis les dates), et chaque groupe se parcourt en vignettes.
- */
-function groupByDay(entries: HistoryEntry[]): HistoryGroup[] {
-  const groups: HistoryGroup[] = [];
-  const index = new Map<string, HistoryGroup>();
-  const today = new Date();
-  for (const entry of entries) {
-    const date = entry.timestamp ? new Date(entry.timestamp) : null;
-    const valid = date !== null && !Number.isNaN(date.getTime());
-    const key = valid ? (date as Date).toDateString() : "inconnue";
-    let group = index.get(key);
-    if (!group) {
-      const startOfDay = (value: Date) =>
-        new Date(
-          value.getFullYear(),
-          value.getMonth(),
-          value.getDate(),
-        ).getTime();
-      const diff = valid
-        ? (startOfDay(today) - startOfDay(date as Date)) / 86_400_000
-        : Number.POSITIVE_INFINITY;
-      group = {
-        key,
-        label: !valid
-          ? "Date inconnue"
-          : diff === 0
-            ? "Aujourd'hui"
-            : diff === 1
-              ? "Hier"
-              : (date as Date).toLocaleDateString("fr-FR", {
-                  weekday: "long",
-                  day: "numeric",
-                  month: "long",
-                }),
-        items: [],
-      };
-      index.set(key, group);
-      groups.push(group);
-    }
-    group.items.push(entry);
-  }
-  return groups;
-}
 
 /** Libellé d'un palier de note, du plus fort au plus faible. */
 const RATING_LABELS: Record<number, string> = {
@@ -338,12 +271,7 @@ export function ProfileView() {
     error,
     ratings,
     favorites,
-    history,
-    historyLimit,
     clearRating,
-    ensureHistory,
-    loadMoreHistory: fetchMoreHistory,
-    resetHistory,
     refreshProfile,
   } = useStore();
 
@@ -355,18 +283,26 @@ export function ProfileView() {
   const [confirmKind, setConfirmKind] = useState<
     null | "history" | "caches" | "avatar"
   >(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  // Modal historique : la liste complete, dedoublonnee, y est visible.
+  const [historyDialog, setHistoryDialog] = useState(false);
   const [ratingsOpen, setRatingsOpen] = useState(false);
   // Nombre de notes effectivement rendues (borne le DOM, pas la donnee).
   const [ratingsLimit, setRatingsLimit] = useState(RATINGS_PAGE);
-  // Filtres locaux : au-dela de quelques dizaines d'entrees, retrouver un titre
-  // precis devient le besoin principal.
-  const [historyQuery, setHistoryQuery] = useState("");
+  // Filtre local des notes : au-dela de quelques dizaines d'entrees, retrouver
+  // un titre precis devient le besoin principal.
   const [ratingsQuery, setRatingsQuery] = useState("");
   // `id` force le redemarrage de l'animation quand un nouveau message remplace
   // l'ancien.
   const noticeSeq = useRef(0);
-  const [tab, setTab] = useState<TabId>("identite");
+  // Ouverture directe sur un onglet (ex. Profil → IA depuis le bandeau du chat).
+  // Initialisation différée : pas de SSR (window absent) ni d'effet à setState.
+  const [tab, setTab] = useState<TabId>(() => {
+    if (typeof window === "undefined") return "identite";
+    const wanted = new URLSearchParams(window.location.search).get("tab");
+    return wanted && TABS.some((item) => item.id === wanted)
+      ? (wanted as TabId)
+      : "identite";
+  });
 
   /** Confirmation ephemere : elle s'efface seule apres quelques secondes. */
   const showNotice = useCallback((text: string) => {
@@ -380,48 +316,14 @@ export function ProfileView() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  // L'historique n'est charge qu'a l'ouverture de l'onglet Donnees : inutile de
-  // payer le cout d'un long historique tant qu'il n'est pas regarde.
-  useEffect(() => {
-    if (tab !== "donnees") return;
-    let active = true;
-    void (async () => {
-      await ensureHistory();
-      if (!active) return;
-    })();
-    return () => {
-      active = false;
-    };
-  }, [tab, ensureHistory]);
-
-  function loadMoreHistory() {
-    void fetchMoreHistory();
-  }
-
   function loadMoreRatings() {
     setRatingsLimit((current) => current + RATINGS_PAGE);
   }
 
-  const historyFilter = historyQuery.trim();
   const ratingsFilter = ratingsQuery.trim();
-  // Le corps est borne par un scroll interne des qu'il depasse l'apercu.
-  const historyScrolls = historyOpen || Boolean(historyFilter);
+  // Le corps des notes est borne par un scroll interne des qu'il depasse
+  // l'apercu.
   const ratingsScrolls = ratingsOpen || Boolean(ratingsFilter);
-
-  // Priorite d'affichage : un filtre actif montre tous ses resultats ; sinon un
-  // apercu suffit tant que la section n'est pas depliee.
-  const shownHistory = useMemo(() => {
-    if (historyFilter) {
-      const needle = normalize(historyFilter);
-      return history.filter((entry) =>
-        normalize(`${entry.title ?? ""} ${entry.channel ?? ""}`).includes(
-          needle,
-        ),
-      );
-    }
-    return historyOpen ? history : history.slice(0, HISTORY_PREVIEW);
-  }, [historyFilter, history, historyOpen]);
-  const groups = useMemo(() => groupByDay(shownHistory), [shownHistory]);
 
   // Filtre applique aux notes, independamment de ce qui est rendu.
   const filteredRatings = useMemo(() => {
@@ -511,8 +413,7 @@ export function ProfileView() {
   async function clearHistory() {
     const res = await api.clearHistory();
     showNotice(`${res.removed} écoute(s) supprimée(s).`);
-    setHistoryOpen(false);
-    await resetHistory();
+    setHistoryDialog(false);
     await refreshProfile();
   }
 
@@ -679,6 +580,13 @@ export function ProfileView() {
           <TasteAssistant active={tab === "assistant"} />
         </TabsContent>
 
+        {/* Modèle d'IA : fournisseur, URL, modèle, clé (masquée). */}
+        <TabsContent value="ia" className="overflow-y-auto">
+          <div className="space-y-8">
+            <AiSettingsForm />
+          </div>
+        </TabsContent>
+
         {/* Mes données */}
         <TabsContent value="donnees" className="overflow-y-auto">
           <div className="space-y-8">
@@ -699,7 +607,7 @@ export function ProfileView() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={history.length === 0}
+                    disabled={historyCount === 0}
                     onClick={() => setConfirmKind("history")}
                     className="text-muted-foreground hover:text-destructive rounded-full text-xs"
                   >
@@ -708,106 +616,28 @@ export function ProfileView() {
                   </Button>
                 }
               >
-                {history.length > HISTORY_PREVIEW && (
-                  <div className="mb-4">
-                    <ListFilter
-                      value={historyQuery}
-                      onChange={setHistoryQuery}
-                      placeholder="Rechercher un titre ou un artiste…"
-                      label="Rechercher dans l'historique"
-                    />
-                    {historyFilter && (
-                      <p
-                        role="status"
-                        className="text-muted-foreground mt-2 text-xs"
-                      >
-                        {shownHistory.length.toLocaleString("fr-FR")} résultat
-                        {shownHistory.length > 1 ? "s" : ""}
-                      </p>
-                    )}
-                  </div>
-                )}
+                <p className="text-muted-foreground text-sm">
+                  {historyCount === 0
+                    ? "Aucune écoute enregistrée. Lance un titre depuis la recherche ou l’accueil."
+                    : "Tout ton historique est ici, chaque titre sans doublon, prêt à être relancé."}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-4 rounded-full"
+                  disabled={historyCount === 0}
+                  onClick={() => setHistoryDialog(true)}
+                >
+                  <History className="size-4" />
+                  Voir l’historique
+                </Button>
 
-                {groups.length === 0 ? (
-                  <p className="text-muted-foreground text-sm">
-                    {historyFilter
-                      ? `Aucune écoute ne correspond à « ${historyFilter} ».`
-                      : "Aucune écoute enregistrée. Lance un titre depuis la recherche ou l'accueil."}
-                  </p>
-                ) : (
-                  <div
-                    className={cn(
-                      "space-y-5",
-                      historyScrolls && "max-h-[26rem] overflow-y-auto pr-1",
-                    )}
-                  >
-                    {groups.map((group) => (
-                      <div key={group.key}>
-                        <div className="mb-2 flex items-baseline gap-2">
-                          <h4 className="text-sm font-medium capitalize">
-                            {group.label}
-                          </h4>
-                          <span className="text-muted-foreground text-xs">
-                            {group.items.length} écoute
-                            {group.items.length > 1 ? "s" : ""}
-                          </span>
-                        </div>
-                        <ul className="flex flex-wrap gap-2">
-                          {group.items.map((entry) => (
-                            <li key={entry.id} className="group relative">
-                              <TrackCover
-                                videoId={entry.video_id}
-                                title={entry.title}
-                                sizes={coverSizes(64)}
-                                rounded="rounded-lg"
-                                className="size-16"
-                              />
-                              {/* Au survol : l'heure de l'écoute, et de quoi la retirer. */}
-                              <span className="text-muted-foreground pointer-events-none absolute inset-x-0 bottom-0 rounded-b-lg bg-black/65 py-0.5 text-center text-[10px] tabular-nums opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-                                {formatHour(entry.timestamp)}
-                              </span>
-                              <button
-                                type="button"
-                                aria-label={`Supprimer l'écoute de ${entry.title || entry.video_id}`}
-                                onClick={() => void removeListen(entry.id)}
-                                className="bg-background/90 text-muted-foreground hover:text-destructive absolute -top-1.5 -right-1.5 rounded-full p-1 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                              >
-                                <X className="size-3" />
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {!historyFilter && history.length > HISTORY_PREVIEW && (
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <MoreButton
-                      total={history.length}
-                      open={historyOpen}
-                      onToggle={() => setHistoryOpen((value) => !value)}
-                    />
-                    {historyOpen &&
-                      history.length < historyCount &&
-                      historyLimit < HISTORY_MAX && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={loadMoreHistory}
-                          className="text-muted-foreground hover:text-foreground rounded-full text-xs"
-                        >
-                          Charger plus (
-                          {Math.min(
-                            HISTORY_PAGE,
-                            historyCount - history.length,
-                          ).toLocaleString("fr-FR")}
-                          )
-                        </Button>
-                      )}
-                  </div>
-                )}
+                <HistoryDialog
+                  open={historyDialog}
+                  onOpenChange={setHistoryDialog}
+                  totalPlays={historyCount}
+                  onRemove={(entryId) => void removeListen(entryId)}
+                />
               </DataCard>
 
               <DataCard

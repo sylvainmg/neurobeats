@@ -57,9 +57,11 @@ async def profile_data():
 
 
 @router.get("/history", response_model=ApiResponse)
-async def profile_history(limit: int = 100):
-    """Dernieres ecoutes (avec leur id, pour la suppression unitaire)."""
-    code, res = await run_tool(list_history, timeout=TIMEOUT_SHORT, limit=limit)
+async def profile_history(limit: int = 100, offset: int = 0):
+    """Dernieres ecoutes (avec leur id, pour la suppression unitaire), paginees."""
+    code, res = await run_tool(
+        list_history, timeout=TIMEOUT_SHORT, limit=limit, offset=offset
+    )
     return to_response(code, res)
 
 

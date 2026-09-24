@@ -236,16 +236,19 @@ def db_log_skip(video_id):
         con.close()
 
 
-def db_get_history(n=50):
+def db_get_history(n=50, offset=0):
     """Retourne les n dernieres ecoutes (ordre antichronologique), `id` inclus.
 
-    L'`id` sert a la suppression unitaire depuis la page Profil.
+    L'`id` sert a la suppression unitaire depuis la page Profil. La pagination
+    se fait `OFFSET` : le modal d'historique charge par tranches, sans rejouer
+    les pages deja affichees.
     """
     con = _connect()
     try:
         rows = con.execute(
             "SELECT id, video_id, title, channel, timestamp, duration, genre, skip"
-            " FROM history ORDER BY id DESC LIMIT ?", (n,)).fetchall()
+            " FROM history ORDER BY id DESC LIMIT ? OFFSET ?",
+            (n, max(0, int(offset)))).fetchall()
         return [dict(r) for r in rows]
     finally:
         con.close()

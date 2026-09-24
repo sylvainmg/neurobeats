@@ -154,17 +154,27 @@ def _overview() -> str:
     }, ensure_ascii=False)
 
 
-def list_history(limit: int = 100) -> str:
-    """Dernieres ecoutes, avec leur `id` (suppression unitaire)."""
+def list_history(limit: int = 100, offset: int = 0) -> str:
+    """Dernieres ecoutes, avec leur `id` (suppression unitaire), page par page.
+
+    `offset` permet au modal d'historique de charger par tranches (scroll
+    infini) au lieu de tout ramener d'un coup : 743 lignes dans le DOM ne se
+    rendent pas d'un seul bloc.
+    """
     try:
-        limit = max(1, min(int(limit or 100), 500))
+        limit = max(1, min(int(limit or 100), 5000))
     except (TypeError, ValueError):
         limit = 100
+    try:
+        offset = max(0, int(offset or 0))
+    except (TypeError, ValueError):
+        offset = 0
     db = _db_module()
     if db is not None:
-        rows = db.db_get_history(limit)
+        rows = db.db_get_history(limit, offset)
     else:  # repli JSON : pas d'id stable, on en fabrique un index
-        rows = list(reversed(hist_read(limit)))
+        rows = list(reversed(hist_read(offset + limit)))
+        rows = rows[offset:offset + limit]
         for index, row in enumerate(rows):
             row["id"] = index
     return json.dumps({"entries": rows}, ensure_ascii=False)
@@ -267,6 +277,7 @@ def clear_caches() -> str:
             counts = db.db_clear_derived_caches()
             removed["genres"] = counts.get("genres", 0)
             removed["embeddings"] = counts.get("embeddings", 0)
+            removed["lyrics"] = counts.get("lyrics", 0)
         except Exception as exc:
             _tprint(f"[profile] purge caches sqlite echec : {exc}")
     try:
