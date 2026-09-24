@@ -18,7 +18,9 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+# Port volontairement hors des valeurs par defaut des frameworks (next -> 3000) :
+# les ports usuels sont pris, on evite la confusion avec d'autres projets.
+FRONTEND_PORT="${FRONTEND_PORT:-3100}"
 # Le port est la source de verite pour identifier un serveur : pas de fichier de
 # pid a maintenir (il deviendrait faux au moindre redemarrage manuel).
 BACKEND_LOG="/tmp/neurobeats-backend.log"
@@ -137,8 +139,8 @@ start_all() {
   ( cd "$ROOT" && launch "$BACKEND_LOG" env NEUROBEATS_PORT="$BACKEND_PORT" \
       NEUROBEATS_TIMING=1 backend/.venv/bin/python backend/main.py )
   ok "backend lance  -> $BACKEND_LOG"
-  ( cd "$ROOT/web" && launch "$FRONTEND_LOG" npm run dev )
-  ok "frontend lance -> $FRONTEND_LOG"
+  ( cd "$ROOT/web" && launch "$FRONTEND_LOG" npm run dev -- -p "$FRONTEND_PORT" )
+  ok "frontend lance -> $FRONTEND_LOG (port :$FRONTEND_PORT)"
 }
 
 # Demarre un serveur DETACHE du script : nouvelle session (`setsid`) et stdin sur
