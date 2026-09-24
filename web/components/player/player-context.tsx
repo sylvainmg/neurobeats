@@ -66,6 +66,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [restState, setRestState] = useState<NowPlayingState | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Contrôleur du dernier `play` : annule la requête précédente restée en vol.
+  const playAbort = useRef<AbortController | null>(null);
   const { now, connected } = useRealtime();
   // Source principale : l'etat pousse par le WebSocket. Repli REST sinon.
   const state = connected && now ? now : restState;
@@ -78,24 +80,40 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Nombre de `run` en vol : `loading` ne retombe qu'à zéro, pour qu'une
+  // lecture annulée (supplantée) ne coupe pas l'indicateur d'une autre en cours.
+  const activeRuns = useRef(0);
+
   const run = useCallback(
     async (fn: () => Promise<NowPlayingState | unknown>) => {
+      activeRuns.current += 1;
       setLoading(true);
       setError(null);
       try {
         await fn();
         await refresh();
       } catch (err) {
-        setError(err instanceof ApiError ? err.message : "Erreur inattendue");
+        // Requête supplantée par un choix plus récent : pas une erreur à montrer.
+        if (!(err instanceof DOMException && err.name === "AbortError")) {
+          setError(err instanceof ApiError ? err.message : "Erreur inattendue");
+        }
       } finally {
-        setLoading(false);
+        activeRuns.current -= 1;
+        if (activeRuns.current === 0) setLoading(false);
       }
     },
     [refresh],
   );
 
   const play = useCallback(
-    (videoId: string) => run(() => api.play(videoId)),
+    (videoId: string) => {
+      // Abort : cliquer un titre pendant qu'une lecture précédente est encore
+      // en cours annule la requête obsolète — seul le dernier choix est joué.
+      playAbort.current?.abort();
+      const controller = new AbortController();
+      playAbort.current = controller;
+      return run(() => api.play(videoId, controller.signal));
+    },
     [run],
   );
   const playNow = useCallback(

@@ -6,6 +6,7 @@ import {
   CircleAlert,
   EllipsisVertical,
   ListPlus,
+  Loader2,
   Music2,
   Play,
   Search as SearchIcon,
@@ -40,6 +41,7 @@ function ResultRow({
   index,
   isCurrent,
   disabled,
+  loading,
   onPlay,
   onAddToPlaylist,
 }: {
@@ -47,6 +49,8 @@ function ResultRow({
   index: number;
   isCurrent: boolean;
   disabled: boolean;
+  /** La lecture de ce résultat est en vol : la ligne porte le feedback. */
+  loading: boolean;
   onPlay: (videoId: string) => void;
   onAddToPlaylist: (track: Track) => void;
 }) {
@@ -63,8 +67,14 @@ function ResultRow({
       <button
         type="button"
         disabled={disabled}
-        onClick={() => onPlay(track.video_id)}
+        onClick={() => {
+          // Ligne déjà en chargement : le clic suivant doit viser ailleurs
+          // (l'abort du choix précédent est géré par le lecteur).
+          if (loading) return;
+          onPlay(track.video_id);
+        }}
         aria-current={isCurrent ? "true" : undefined}
+        aria-busy={loading || undefined}
         className={cn(
           "group focus-visible:ring-ring/60 flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors focus-visible:ring-3 focus-visible:outline-none",
           isCurrent ? "bg-surface-hover" : "hover:bg-surface-hover",
@@ -82,10 +92,17 @@ function ResultRow({
           <span
             className={cn(
               "absolute inset-0 grid place-items-center rounded-md bg-black/50 transition-opacity",
-              "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100",
+              // Chargement : spinner permanent ; sinon affordance au survol.
+              loading
+                ? "opacity-100"
+                : "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100",
             )}
           >
-            <Play className="size-4 fill-current text-white" />
+            {loading ? (
+              <Loader2 className="size-4 animate-spin text-white" aria-hidden="true" />
+            ) : (
+              <Play className="size-4 fill-current text-white" />
+            )}
           </span>
         </span>
 
@@ -105,7 +122,7 @@ function ResultRow({
             )}
           </span>
           <span className="text-muted-foreground mt-0.5 truncate text-xs">
-            {track.channel}
+            {loading ? "Chargement du titre…" : track.channel}
           </span>
         </span>
 
@@ -157,8 +174,11 @@ function ResultRow({
 }
 
 export default function SearchPage() {
-  const { play, loading, state } = usePlayer();
+  const { play, state } = usePlayer();
   const inputRef = useRef<HTMLInputElement>(null);
+  // Contrôleur de la recherche en vol : une nouvelle recherche annule la
+  // précédente (dernier choix gagne), elle ne part jamais deux requêtes de front.
+  const searchAbort = useRef<AbortController | null>(null);
   // Numéro de la recherche en cours : invalide une réponse arrivée après coup
   // (ex. l'utilisateur vide le champ pendant le chargement).
   const searchSeq = useRef(0);
@@ -172,8 +192,26 @@ export default function SearchPage() {
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   // Titre ciblé par « Ajouter à une playlist » (menu des résultats).
   const [addTrack, setAddTrack] = useState<Track | null>(null);
+  // Titre en cours de lancement : la ligne cliquée porte le feedback
+  // (spinner + libellé) tant que la lecture n'a pas abouti.
+  const [loadingId, setLoadingId] = useState<string | null>(null);
 
   const busy = status === "loading";
+
+  // Dernier titre lancé : seule la ligne du lancement le plus récent porte le
+  // feedback — la résolution d'une lecture annulée (supplantée par un clic
+  // suivant) ne doit pas couper l'indicateur de la nouvelle.
+  const launchRef = useRef<string | null>(null);
+
+  /** Lance la lecture ; un second clic annule la requête précédente encore en
+   * vol (abort géré par `play` du lecteur) : seul le dernier choix est joué. */
+  function launch(videoId: string) {
+    launchRef.current = videoId;
+    setLoadingId(videoId);
+    void play(videoId).finally(() => {
+      if (launchRef.current === videoId) setLoadingId(null);
+    });
+  }
 
   // Le serveur construit les libellés en arrière-plan : on repasse tant qu'il
   // travaille. Liste vide = aucun libellé fiable → on n'affiche rien.
@@ -205,17 +243,23 @@ export default function SearchPage() {
 
   async function runSearch(raw: string) {
     const q = raw.trim();
-    if (!q || busy) return;
+    if (!q) return;
     const seq = ++searchSeq.current;
+    // Toute recherche en cours devient obsolète : on l'annule et on repart.
+    searchAbort.current?.abort();
+    const controller = new AbortController();
+    searchAbort.current = controller;
     setStatus("loading");
     setError(null);
     setSubmitted(q);
     try {
-      const data = await api.search(q, RESULT_LIMIT);
+      const data = await api.search(q, RESULT_LIMIT, controller.signal);
       if (seq !== searchSeq.current) return;
       setResults(data);
       setStatus("done");
     } catch (err) {
+      // Requête supplantée (nouvelle recherche) : aucun message à afficher.
+      if (err instanceof DOMException && err.name === "AbortError") return;
       if (seq !== searchSeq.current) return;
       setResults([]);
       setError(
@@ -237,6 +281,7 @@ export default function SearchPage() {
 
   function reset() {
     searchSeq.current += 1;
+    searchAbort.current?.abort();
     setQuery("");
     setSubmitted("");
     setResults([]);
@@ -312,7 +357,7 @@ export default function SearchPage() {
         <Button
           type="submit"
           size="lg"
-          disabled={busy || !query.trim()}
+          disabled={!query.trim()}
           className="h-11 rounded-full px-6"
         >
           Rechercher
@@ -449,8 +494,9 @@ export default function SearchPage() {
                 track={track}
                 index={index}
                 isCurrent={state?.video_id === track.video_id}
-                disabled={loading}
-                onPlay={(videoId) => void play(videoId)}
+                disabled={false}
+                loading={loadingId === track.video_id}
+                onPlay={launch}
                 onAddToPlaylist={setAddTrack}
               />
             ))}
