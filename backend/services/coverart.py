@@ -1,11 +1,16 @@
 """Jaquettes d'album reelles : palier haut des pochettes HQ.
 
-Un titre YouTube ne dit pas quel album il illustre. On interroge donc les
-catalogues publics (Deezer, puis iTunes) avec l'artiste et le titre, et on
-n'accepte QUE les rapprochements surs : mieux vaut garder la vignette YouTube
-qu'afficher la jaquette d'un autre morceau. Le seuil est dans
-`core.config.COVERS_MATCH_MIN`, et la duree sert d'arbitre quand on la connait
-des deux cotes.
+Un titre YouTube ne dit pas quel album il illustre. On interroge donc le
+catalogue public Deezer avec l'artiste et le titre, et on n'accepte QUE les
+rapprochements surs : mieux vaut garder la vignette YouTube qu'afficher la
+jaquette d'un autre morceau. Le seuil est dans `core.config.COVERS_MATCH_MIN`,
+et la duree sert d'arbitre quand on la connait des deux cotes.
+
+iTunes est volontairement exclu : son CDN (mzstatic) incruste le logo Apple
+Music dans les grandes tailles d'artwork (le coin haut-droit differe de la
+vignette officielle des 1400 px). Une jaquette « Apple » n'est pas une jaquette
+d'album propre. Si Deezer ne rapproche rien, l'appelant passe a la frame HD ou
+a la vignette YouTube recadree : meme image, plus nette.
 
 Interet pour la netteté : une jaquette d'album est **carree** (aucun recadrage,
 donc aucun pixel perdu) et disponible en 1000 px et plus, la ou YouTube plafonne
@@ -26,10 +31,6 @@ from core.config import COVERS_MATCH_MIN
 
 TIMEOUT = 8.0
 _USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) NeuroBeats/1.0"
-
-# Taille reclamee a iTunes : son URL de vignette porte la taille, donc on monte
-# directement au-dela du plafond des pochettes (un seul telechargement utile).
-ITUNES_PX = 1400
 
 # Mentions qui trainent dans les titres et noms de chaine YouTube et faussent le
 # rapprochement avec un catalogue musical. Appliquees des deux cotes de la
@@ -149,30 +150,6 @@ def _deezer(artist: str, title: str, duration):
     return best
 
 
-def _itunes(artist: str, title: str, duration):
-    """Meilleur candidat iTunes (jaquette jusqu'a ITUNES_PX), ou None."""
-    data = _get_json("https://itunes.apple.com/search?limit=10&entity=song&term="
-                     + urllib.parse.quote(_search_term(f"{artist} {title}")))
-    best = None
-    for item in (data or {}).get("results") or []:
-        artwork = item.get("artworkUrl100") or ""
-        if not artwork:
-            continue
-        score = _score(artist, title, duration, {
-            "title": item.get("trackName") or "",
-            "artist": item.get("artistName") or "",
-            "duration": (item.get("trackTimeMillis") or 0) / 1000 or None,
-        })
-        if best is None or score > best["score"]:
-            best = {
-                "url": re.sub(r"/\d+x\d+bb\.(?:jpg|png)",
-                              f"/{ITUNES_PX}x{ITUNES_PX}bb.jpg", artwork),
-                "provider": "itunes",
-                "score": score,
-            }
-    return best
-
-
 def resolve(title: str, channel: str, duration=None):
     """Jaquette d'album sure pour ce titre, ou None.
 
@@ -188,7 +165,10 @@ def resolve(title: str, channel: str, duration=None):
     artist, track = _split_artist(title, channel)
     if not track:
         return None
-    for provider in (_deezer, _itunes):
+    # Deezer seul depuis le retrait d'iTunes (logo Apple Music incruste dans les
+    # grands artwork, cf. en-tete). S'il ne rapproche rien de sur, l'appelant
+    # passe a la frame HD / la vignette YouTube recadree.
+    for provider in (_deezer,):
         best = provider(artist, track, duration)
         if best and best["score"] >= COVERS_MATCH_MIN:
             best.update({"artist": artist, "track": track})
