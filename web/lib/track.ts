@@ -3,18 +3,21 @@
 import { API_URL } from "@/lib/api";
 
 /**
- * Qualités de jaquette YouTube, de la meilleure à la plus disponible.
+ * Qualités de jaquette YouTube, de la plus fiable à la meilleure qualité.
  *
- * `maxresdefault` et `hq720` (1280×720, 16/9 net) manquent sur une partie des
- * vidéos — y compris des vidéos HD, pour lesquelles YouTube publie alors son
- * og:image en `hqdefault`. `sddefault` (640×480) prend le relais : c'est la
- * meilleure source restante, avec deux fois plus de lignes utiles que
- * `mqdefault` (320×180), mais son image 16/9 est letterboxée dans du 4/3.
+ * `hqdefault` (4/3 letterboxé, ~480 utiles) et `mqdefault` (320×180) sont
+ * servis en premier : ce sont les seules que toutes les vidéos fournissent.
+ * Mesures sur l'historique réel : `sddefault`, `hq720` et `maxresdefault`
+ * renvoient 404 en bloc sur certaines vidéos pourtant vivantes (ex. albums de
+ * MMZ/Lomepal) — les tenter d'abord saturait la console du navigateur en 404
+ * `/_next/image`. Elles restent en bonus quand présentes, pour les grandes
+ * pochettes (la couverture HQ du backend prend le relais via `hq`).
  */
 const THUMB_QUALITIES = [
+  { quality: "hqdefault", letterbox: true },
+  { quality: "sddefault", letterbox: true },
   { quality: "maxresdefault", letterbox: false },
   { quality: "hq720", letterbox: false },
-  { quality: "sddefault", letterbox: true },
   { quality: "mqdefault", letterbox: false },
 ] as const;
 

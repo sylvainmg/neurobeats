@@ -13,7 +13,7 @@ const HQ_TRIES = 3;
 /** Repli typographique : initiale du titre, si aucune jaquette ne charge. */
 function CoverInitial({ title }: { title: string }) {
   return (
-    <span className="from-primary/25 text-primary grid h-full w-full place-items-center bg-gradient-to-br to-transparent text-sm font-semibold">
+    <span className="from-primary/25 text-primary absolute inset-0 grid h-full w-full place-items-center bg-gradient-to-br to-transparent text-sm font-semibold">
       {(title || "?").trim().charAt(0).toUpperCase()}
     </span>
   );
@@ -99,23 +99,31 @@ function CoverImage({
   const [index, setIndex] = useState(0);
   const source = sources[index];
 
-  if (!source) return <CoverInitial title={title} />;
-
   return (
     <>
-      <Image
-        key={source.src}
-        src={source.src}
-        alt=""
-        fill
-        sizes={sizes}
-        className="object-cover"
-        // Une jaquette letterboxée est agrandie pour que ses bandes noires
-        // sortent du carré, sans quoi elles apparaîtraient dans la pochette.
-        style={source.zoom !== 1 ? { transform: `scale(${source.zoom})` } : undefined}
-        onError={() => setIndex((current) => current + 1)}
-      />
-      {hq && <CoverHq videoId={videoId} />}
+      {/*
+        Initiale posée DESSOUS, toujours visible : pendant le chargement de
+        l'image (pas de carré gris vide, d'où ce "rien ne s'affiche" perçu sur
+        les rafales d'historique) et seule quand toutes les vignettes échouent.
+      */}
+      <CoverInitial title={title} />
+      {source && (
+        <>
+          <Image
+            key={source.src}
+            src={source.src}
+            alt=""
+            fill
+            sizes={sizes}
+            className="object-cover"
+            // Une jaquette letterboxée est agrandie pour que ses bandes noires
+            // sortent du carré, sans quoi elles apparaîtraient dans la pochette.
+            style={source.zoom !== 1 ? { transform: `scale(${source.zoom})` } : undefined}
+            onError={() => setIndex((current) => current + 1)}
+          />
+          {hq && <CoverHq videoId={videoId} />}
+        </>
+      )}
     </>
   );
 }
