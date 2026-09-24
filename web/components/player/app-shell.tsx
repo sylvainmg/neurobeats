@@ -5,6 +5,7 @@ import { NowPlaying } from "@/components/layout/now-playing";
 import { Sidebar } from "@/components/layout/sidebar";
 import { TopBar } from "@/components/layout/top-bar";
 import { ChatLauncher } from "@/components/chat/chat-launcher";
+import { LyricsLauncher } from "@/components/lyrics/lyrics-launcher";
 import { OverlaysProvider } from "@/lib/overlays";
 import { PlaylistsProvider } from "@/lib/playlists";
 
@@ -27,6 +28,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <NowPlaying />
           </div>
           <ChatLauncher />
+          {/* Monté après ChatLauncher : le panneau paroles (z-40) couvre le
+              bouton flottant du chat lorsqu'il est ouvert. */}
+          <LyricsLauncher />
         </OverlaysProvider>
       </PlaylistsProvider>
     </PlayerProvider>

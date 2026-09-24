@@ -29,6 +29,7 @@ import {
 import { TrackCover } from "@/components/track-cover";
 import { useRealtime } from "@/lib/realtime";
 import { useOverlays } from "@/lib/overlays";
+import { LyricsButton } from "@/components/lyrics/lyrics-button";
 import { coverSizes } from "@/lib/track";
 import { cn } from "cn";
 
@@ -66,7 +67,7 @@ export function NowPlaying() {
     setRepeat: setRepeatBackend,
   } = usePlayer();
   const { queue: liveQueue, connected } = useRealtime();
-  const { queueOpen, setQueueOpen } = useOverlays();
+  const { queueOpen, setQueueOpen, lyricsOpen, setLyricsOpen } = useOverlays();
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState<RepeatMode>("off");
   const [volume, setVolume] = useState(70);
@@ -360,8 +361,8 @@ export function NowPlaying() {
         </div>
       </div>
 
-      {/* Volume + file de lecture */}
-      <div className="flex w-56 items-center justify-end gap-3">
+      {/* Volume + file de lecture + paroles */}
+      <div className="flex w-64 items-center justify-end gap-3">
         <div className="hidden items-center gap-2 lg:flex">
           <Volume2 className="text-muted-foreground size-4" />
           <Slider
@@ -406,6 +407,11 @@ export function NowPlaying() {
         >
           <ListMusic />
         </Button>
+        <LyricsButton
+          open={lyricsOpen}
+          disabled={!state?.video_id}
+          onToggle={() => setLyricsOpen(!lyricsOpen)}
+        />
       </div>
 
       <AddToPlaylistDialog

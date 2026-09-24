@@ -142,6 +142,22 @@
   animation: nb-rise 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Sortie du panneau paroles : miroir de nb-rise (fondu + légère descente).
+   Le composant démonte juste après la fin de l'animation (EXIT_MS). */
+@keyframes nb-leave {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.nb-leave {
+  animation: nb-leave 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 /* Confirmation de profil : apparait, se maintient, puis s'efface seule (la
    suppression d'etat cote JS tombe juste apres la fin de l'animation). */
 @keyframes nb-notice {
@@ -184,6 +200,12 @@
   .nb-rise,
   .nb-notice {
     animation: none;
+  }
+  /* Sortie paroles : invisible dès le premier instant (le démontage tombe
+     toujours 200 ms après, mais rien ne bouge ni ne reste affiché). */
+  .nb-leave {
+    animation: none;
+    opacity: 0;
   }
   /* Mouvement supprime : l'egaliseur reste lisible, figé sur des hauteurs fixes. */
   .nb-eq {
