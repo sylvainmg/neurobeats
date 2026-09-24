@@ -368,3 +368,47 @@ def start_streaming(mood: str, force_genre: bool = True) -> None:
 Un bon commentaire explique une décision tricky. Un mauvais répète le code.
 
 ---
+
+## §59 — Runtime yt-dlp Android (module expo `ytdlp-react-native`)
+
+### Vision (3 runtimes)
+
+1. **Embarqué (pin, fallback offline)** : AAR local
+   `dev.ffmpegkit-maintained:yt-dlp-android:2.0.3-neurobeats`
+   (`yt_dlp` 2026.08.19 + `yt_dlp_ejs` 0.8.0, Python Chaquopy 17.0.0, x86_64 + arm64-v8a).
+   Toujours présent ; sert en mode hors-ligne et en rollback.
+2. **Live (auto-update PyPI)** : unzip wheels dans `files/ytdlp-live`, activé via
+   `sys.path[0]` + purge de `sys.modules`. Persistant : ré-appliqué à chaque
+   démarrage (`reapplyIfLive`) car `sys.path` est par-process. Tout échec →
+   suppression de `ytdlp-live` (rollback silencieux vers l'embarqué).
+3. **JS runtime (challenges EJS)** : QuickJS-ng ≥ 0.12.0
+   (`quickjs` ≥ 2023.12.9), livré en `jniLibs` `libqjs.so`,
+   injecté via `js_runtimes: {"quickjs": {"path": ...}}`.
+
+### Règles d'écriture (NE PAS CASSER)
+
+- **Interdiction de forcer `player_client`** (client YouTube = laissé à yt-dlp).
+  Les stratégies vues en production : `web` + `web_embedded` (API player), `visionos`
+  pour les flux avec PoToken. `extractor_args` du moteur sont le point unique d'ajustement.
+- **Chemins avec espaces** : l'expéditeur doit remettre un `uri` encodé
+  (`Uri.fromFile(...).toString()`) car `Paths.join` d'expo-file-system n'encode que
+  les segments ≥ 2 (le `file://` brut du 1er argument rejette les espaces nativement).
+  Toute copie d'un fichier téléchargé doit utiliser `new File(uri ?? path ?? "")`.
+- **Ne pas striper les `build/*.d.ts|.js`** : les types/facades `build/` sont committés
+  (TS sert les types depuis `build/`). Toute API native ajoutée doit mettre à jour
+  `build/YtDlp.js`, `build/index.js`, `build/index.d.ts`, `build/errors.js`,
+  `build/types.d.ts` (codes erreur) + facade web `ExpoYtDlpModule.web.js`.
+
+### Auto-updater (contrat)
+
+- `updateYtDlp()` → `{action: "up_to_date" | "updated", version}`. Comparaison PEP 440
+  normalisée (`2026.08.19` == `2026.8.19`, PyPI normalise les zéros).
+- Codes : `BUSY` (un download actif), `UPDATE_NETWORK`, `UPDATE_FAILED`.
+- Wheel cible : `yt_dlp-<version-pypi>-py3-none-any.whl` ; ejs épinglé lu dans
+  `requires-dist` du METADATA (`yt-dlp-ejs==X.Y.Z`). SHA-256 vérifié avant unzip.
+- Déclencheur app : échec de transfert sur `NETWORK_ERROR` → `updateYtDlp()` en fond,
+  une seule tentative ; l'utilisateur est informé du résultat.
+- Rebuild du pin : depuis `$HOME/python` (cpython-build-standalone 3.13.2),
+  `./gradlew :library:publishToMavenLocal --no-daemon -x test`.
+
+---
