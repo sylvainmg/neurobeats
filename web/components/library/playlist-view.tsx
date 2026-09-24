@@ -9,6 +9,7 @@ import {
   Play,
   Plus,
   Search,
+  Smartphone,
   Trash2,
   X,
 } from "lucide-react";
@@ -16,6 +17,10 @@ import {
 import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import {
+  TransferDialog,
+  useTransferTicket,
+} from "@/components/library/transfer-dialog";
 import { TrackCover } from "@/components/track-cover";
 import { ApiError, api, type Track } from "@/lib/api";
 import { usePlaylists } from "@/lib/playlists";
@@ -52,6 +57,8 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
   const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const transfer = useTransferTicket(playlistId);
 
   // Charge le détail tant que le store ne l'a pas (ou s'il est périmé).
   useEffect(() => {
@@ -237,6 +244,17 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
               Ajouter des titres
             </Button>
             <Button
+              variant="outline"
+              onClick={() => {
+                setTransferOpen(true);
+                void transfer.start();
+              }}
+              disabled={!playlist.songs.length}
+            >
+              <Smartphone />
+              Transférer vers le téléphone
+            </Button>
+            <Button
               variant="ghost"
               size="icon"
               aria-label="Renommer la playlist"
@@ -371,6 +389,15 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
           ))}
         </ul>
       )}
+
+      <TransferDialog
+        open={transferOpen}
+        onOpenChange={setTransferOpen}
+        ticket={transfer.ticket}
+        error={transfer.error}
+        pending={transfer.pending}
+        onRetry={() => void transfer.start()}
+      />
 
       <ConfirmDialog
         open={confirmDelete}

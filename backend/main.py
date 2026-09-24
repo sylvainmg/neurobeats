@@ -24,13 +24,13 @@ from fastapi.responses import JSONResponse
 
 from routers import (
     chat, discover, health, playback, playlists, profile, realtime,
-    recommendation, search, stats, streaming,
+    recommendation, search, stats, streaming, transfer,
 )
 # Alias : `covers` designe deja le service (pochettes HQ) plus bas dans ce module.
 from routers import covers as covers_router
 from services.audio import (
-    _ipc_event_loop, _load_stream_cache, _prefill_queue, _shutdown_daemon,
-    _stop_player,
+    _ensure_daemon, _ipc_event_loop, _load_stream_cache, _prefill_queue,
+    _shutdown_daemon, _stop_player,
 )
 from services.db_access import _migrate_json_to_db
 from services.embeddings import warm_reco_model
@@ -63,6 +63,12 @@ async def lifespan(_app: FastAPI):
     if not _bootstrapped:
         _migrate_json_to_db()
         _load_stream_cache()
+        # Lecteur singleton : on etablit le daemon mpv immediatement au boot
+        # (et on purge les orphelins d'une session precedente) pour qu'aucune
+        # lecture ne soit jamais confiee a un process hors du daemon.
+        if not _ensure_daemon():
+            print("  [boot] avertissement : daemon mpv injoignable au demarrage "
+                  "(sera relance a la premiere lecture)", flush=True)
         # Pochettes HQ : reconstruit l'index disque (et purge ce qui est perime)
         # avant que le client ne demande la moindre image.
         covers.warm()
@@ -97,7 +103,7 @@ app.add_middleware(
 
 for _router in (health, search, playback, recommendation, streaming,
                 playlists, discover, profile, chat, stats, realtime,
-                covers_router):
+                covers_router, transfer):
     app.include_router(_router.router)
 
 

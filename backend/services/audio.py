@@ -1,6 +1,7 @@
 """Audio : daemon mpv IPC, resolution d'URL, lecture, prefetch, arret."""
 import json
 import os
+import signal
 import socket
 import subprocess
 import threading
@@ -9,14 +10,14 @@ import time
 from yt_dlp import YoutubeDL
 
 from core.config import (
-    TIMING, MPV_BASE_ARGS, STREAM_CACHE_PATH, STREAM_CACHE_TTL,
+    MPV_BASE_ARGS, STREAM_CACHE_PATH, STREAM_CACHE_TTL,
     YDL_AUDIO_OPTS, YDL_CLIENT_SETS, VIDEO_ID_RE,
 )
 from services import audiocache, state
 from services.db_access import _meta, hist_append, hist_read
 from services.genres import _genre_of, infer_genre_ollama
 from services.state import (
-    _cache_lock, _drain_timer_msgs, _now_ms, _tprint, _watch_first_second,
+    _cache_lock, _drain_timer_msgs, _now_ms, _tprint,
     load_json, save_json, TIMER_MSGS,
 )
 
@@ -29,7 +30,7 @@ _PREFETCH_CACHE_MAX = 64
 
 # mpv accepte un `loadfile` (reponse "success") puis peut echouer en silence :
 # on verifie que la lecture a REELLEMENT demarre avant d'annoncer "playing".
-PLAY_START_TIMEOUT = 3.0
+PLAY_START_TIMEOUT = 8.0
 
 # Le genre ne sert qu'a l'historique et aux stats : il ne doit jamais retarder le
 # son. On l'inference donc en parallele du demarrage, et on ne l'attend qu'au
@@ -243,12 +244,55 @@ def _mpv_ready() -> bool:
     return state._mpv_daemon is not None and state._mpv_daemon.poll() is None
 
 
+def _reap_orphan_mpv():
+    """Tue tout process mpv encore lie a notre socket IPC (orphelins de crash,
+    daemon d'un backend precedent, etc.). Le lecteur est un SINGLETON : un seul
+    mpv doit exister, et il porte notre socket. Toute cohabitation est une
+    "lecture fantome" potentielle : on la termine avant de reprendre la main
+    sur le socket.
+    """
+    marker = f"--input-ipc-server={state._MPV_SOCK}"
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                if f"--input-ipc-server={state._MPV_SOCK}".encode() not in fh.read().replace(b"\x00", b" "):
+                    continue
+        except OSError:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            continue
+        for _ in range(10):  # grace courte (0.5 s) puis SIGKILL
+            if not os.path.exists(f"/proc/{pid}"):
+                break
+            time.sleep(0.05)
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+
 def _ensure_daemon() -> bool:
-    """Lance le daemon mpv persistant si absent. Retourne True si le socket repond."""
+    """Lance le daemon mpv persistant si absent. Retourne True si le socket repond.
+
+    Note singleton : avant tout (re)demarrage, on purge les mpv orphelins encore
+    lies a notre socket (`_reap_orphan_mpv`) — un crash ou un backend precedent
+    ne laisse jamais un second mpv cohabiter.
+    """
     if state._mpv_daemon is not None and state._mpv_daemon.poll() is None:
         if _ipc_send(["get_property", "mpv-version"], timeout=2.0):
             return True
     _shutdown_daemon()
+    _reap_orphan_mpv()
     try:
         if os.path.exists(state._MPV_SOCK):
             os.unlink(state._MPV_SOCK)
@@ -311,27 +355,14 @@ def _ipc_event_loop():
 
 
 def _stop_player():
+    """Coupe TOUTE lecture : le daemon reste chaud (aucun second process mpv).
+
+    Singleton : la seule source de son est le daemon ; l'arreter suffit, le
+    daemon garde son socket et AO/TLS chauds pour la lecture suivante.
+    """
     state._now_playing = False
     if state._mpv_daemon is not None and state._mpv_daemon.poll() is None:
         _ipc_send(["stop"], timeout=2.0)  # daemon : stop sans tuer (reste chaud)
-        return
-    old, state._player = state._player, None  # libere la reference : le prochain play ne bloque pas
-    if old is not None:
-        try:
-            if old.poll() is None:
-                old.terminate()
-                try:
-                    old.wait(timeout=1)  # delai court : on ne bloque pas le demarrage
-                except subprocess.TimeoutExpired:
-                    old.kill()
-        finally:
-            # Ferme les pipes eventuels (mode TIMING) pour eviter les fd leaks
-            for stream in (getattr(old, "stdout", None), getattr(old, "stderr", None)):
-                try:
-                    if stream is not None:
-                        stream.close()
-                except Exception:
-                    pass
 
 
 def _cached_candidate(video_id: str, stream_url: str) -> str:
@@ -382,7 +413,8 @@ def play_music(video_id: str, autoplay: bool = True, log: bool = True) -> str:
         state.STREAMING_SKIP.set()
         TIMER_MSGS.put("  [STREAMING] interrompu par lecture manuelle.")
     _drain_timer_msgs()
-    # Voie rapide : daemon mpv persistant (IPC), AO/TLS deja chauds.
+    # Voie unique : le daemon mpv persistant (IPC). Il n'existe QU'UN mpv ; le
+    # daemon reprend la main si un titre precedent ne chargeait pas.
     if _ensure_daemon():
         page_url = f"https://www.youtube.com/watch?v={video_id}"
         print("  … connexion au flux audio", flush=True)
@@ -414,7 +446,6 @@ def play_music(video_id: str, autoplay: bool = True, log: bool = True) -> str:
                 state._mpv_timing.update({"gen": state._mpv_timing["gen"] + 1, "t_mpv": _now_ms(),
                                           "t_stream": t_stream_start, "resolve": resolve_dur, "found": False})
                 state._now_playing = True
-                state._player_t0 = t_stream_start
                 title, channel = meta.get("title", ""), meta.get("channel", "")
                 print(f"\n  ▶ {'Préparé (pause)' if not autoplay else 'Lecture'} : {title} — {channel}\n")
                 _p_genre = genre_job.genre()
@@ -438,55 +469,22 @@ def play_music(video_id: str, autoplay: bool = True, log: bool = True) -> str:
             if not fresh:
                 break
             candidate = fresh
-        _tprint(f"daemon mpv loadfile echec ({resp}), fallback spawn direct")
-    # Repli : un process mpv dedie (si le daemon n'est pas disponible).
-    _stop_player()
-    page_url = f"https://www.youtube.com/watch?v={video_id}"
-    print("  … connexion au flux audio", flush=True)
-    t_stream_start = time.perf_counter()
-    entry = state.STREAM_CACHE.get(video_id)
-    from_cache = isinstance(entry, dict) and bool(entry.get("url"))
-    stream_url = _cached_candidate(video_id, _resolve_audio_url(video_id) or page_url)
-    resolve_dur = time.perf_counter() - t_stream_start
-    _tprint(f"resolution flux audio : {resolve_dur:.1f}s{' (cache)' if from_cache and stream_url != page_url else ''}")
-    print("  … lancement du son", flush=True)
-    try:
-        t_mpv_start = time.perf_counter()
-        args = MPV_BASE_ARGS if not TIMING else [a for a in MPV_BASE_ARGS if a != "--really-quiet"]
-        if not autoplay:
-            args = args + ["--pause=yes"]  # repli : demarre en pause comme le daemon
-        state._player = subprocess.Popen(
-            args + [stream_url],
-            stdout=subprocess.PIPE,  # toujours pipe : le thread timer draine + detecte le 1er son
-            stderr=subprocess.STDOUT,  # statuts A:.. sur stdout (--msg-level=all=status garde le silence console)
-            text=False,
-            bufsize=0,
-        )
-        state._player_t0 = t_mpv_start
-        _tprint(f"mpv demarre en {time.perf_counter() - t_mpv_start:.2f}s — attente du son…")
-        if state._player.stdout is not None:
-            state._player.read = state._player.stdout.read  # le thread timer lit la sortie mpv via proc.read()
-            threading.Thread(target=_watch_first_second,
-                             args=(state._player, t_mpv_start, t_stream_start, resolve_dur),
-                             daemon=True).start()
-    except FileNotFoundError:
-        state._player = None
-        return json.dumps({"error": "mpv introuvable. Installe mpv pour le streaming audio."}, ensure_ascii=False)
-    except Exception as exc:
-        state._player = None
-        return json.dumps({"error": f"Echec lancement mpv : {exc}"}, ensure_ascii=False)
-    title, channel = meta.get("title", ""), meta.get("channel", "")
-    print(f"\n  ▶ {'Préparé (pause)' if not autoplay else 'Lecture'} : {title} — {channel}\n")
-    _p_genre = genre_job.genre()
-    from services.queue import record_played
-    record_played({"video_id": video_id, "title": title,
-                   "channel": channel, "genre": _p_genre})
-    if log:
-        hist_append(video_id, title, channel, meta.get("duration"), _p_genre)
-    _maybe_prefetch_next(video_id)
-    return json.dumps({"status": "playing", "paused": not autoplay,
-                       "video_id": video_id, "title": title,
-                       "channel": channel}, ensure_ascii=False)
+        _tprint(f"daemon mpv : lecture echec ({resp}) — aucun son lance")
+        # SINGLETON : toute lecture passe EXCLUSIVEMENT par le daemon. En cas
+        # d'echec (flux expire, indisponible), on rend une erreur nette — jamais
+        # un second process mpv qui jouerait hors controle.
+        state._now_playing = False
+        return json.dumps({
+            "error": "Lecture impossible : mpv n'a pas charge le titre "
+                     f"'{meta.get('title', video_id)}' (flux expire ou interrompu). "
+                     "Relance une recherche ou demande une nouvelle recommandation.",
+        }, ensure_ascii=False)
+    # Daemon injoignable : meme regle de singleton, aucun repli direct.
+    state._now_playing = False
+    return json.dumps(
+        {"error": "Lecteur mpv indisponible (daemon injoignable). Reessaie dans un instant."},
+        ensure_ascii=False,
+    )
 
 
 def _maybe_prefetch_next(current_id: str):
@@ -623,8 +621,11 @@ def prepare_playback() -> str:
     silencieux. Seule la grace de 10 s (presence temps reel) laisse une lecture
     deja en cours continuer lors d'une absence courte.
 
+    Daemon pas encore pret (redemarrage du backend pendant une connexion) : on
+    retente en arriere-plan de facon bornee ; jamais aucun repli direct.
+
     Returns:
-        JSON {status: 'prepared'|'already_loaded'|'no_history'} ou {error}.
+        JSON {status: 'prepared'|'already_loaded'|'preparing'|'no_history'} ou {error}.
     """
     if not _PREPARE_LOCK.acquire(blocking=False):
         return json.dumps({"status": "preparing"}, ensure_ascii=False)
@@ -636,6 +637,28 @@ def prepare_playback() -> str:
         video_id = (last[0].get("video_id") if last else None)
         if not video_id:
             return json.dumps({"status": "no_history"}, ensure_ascii=False)
+        if not _ensure_daemon():
+            # Le daemon retient le demarrage (quelques secondes au deboot).
+            # REtenter ici garderait le client bloque ; on y retourne en fond.
+            def _retry_prepare():
+                for _ in range(20):  # ~8 s max, le temps que mpv reponde
+                    time.sleep(0.4)
+                    if state._now_playing:
+                        return
+                    if _ensure_daemon():
+                        break
+                if not _ensure_daemon():
+                    return
+                try:
+                    res = json.loads(play_music(video_id, autoplay=False, log=False))
+                except Exception:
+                    return
+                if res.get("status") == "playing":
+                    threading.Thread(target=_prefill_queue, daemon=True,
+                                     name="prefill-queue").start()
+            threading.Thread(target=_retry_prepare, daemon=True,
+                             name="prepare-retry").start()
+            return json.dumps({"status": "preparing"}, ensure_ascii=False)
         res = json.loads(play_music(video_id, autoplay=False, log=False))
         if res.get("status") != "playing":
             return json.dumps(res, ensure_ascii=False)
@@ -656,7 +679,7 @@ def stop_music() -> str:
         JSON {status: 'stopped'} si une lecture etait active, sinon 'nothing_playing'.
     """
     _drain_timer_msgs()
-    was_playing = state._now_playing or (state._player is not None and state._player.poll() is None)
+    was_playing = state._now_playing
     _stop_player()
     return json.dumps({"status": "stopped" if was_playing else "nothing_playing"}, ensure_ascii=False)
 
@@ -688,7 +711,7 @@ def is_idle() -> bool:
 
 
 def toggle_pause() -> str:
-    """Bascule pause/reprise de la lecture en cours (mpv IPC).
+    """Bascule pause/reprise de la lecture en cours (mpv IPC, daemon unique).
 
     Returns:
         JSON {status: 'paused'|'playing', paused} ou {error}.
@@ -752,26 +775,36 @@ def playback_state() -> str:
     """
     pos = dur = None
     paused = False
-    if _mpv_ready():
+    if not _mpv_ready():
+        # Singleton : le daemon est la SEULE source de son. S'il est injoignable,
+        # rien ne joue, jamais (sinon titre fantome affiche alors que rien ne sort).
+        state._now_playing = False
+    else:
         ri = _ipc_send(["get_property", "idle-active"], timeout=1.0)
-        if ri and ri.get("error") == "success" and ri.get("data") is True:
+        daemon_idle = bool(ri and ri.get("error") == "success" and ri.get("data") is True)
+        if daemon_idle:
             # mpv n'a plus rien charge (fin de titre, flux casse, arret) : le
             # drapeau "playing" ne doit pas survivre, sinon l'UI affiche un titre
             # fantome (annonce comme en lecture, sans duree ni son).
             state._now_playing = False
-        rp = _ipc_send(["get_property", "time-pos"], timeout=2.0)
-        rd = _ipc_send(["get_property", "duration"], timeout=2.0)
-        rpa = _ipc_send(["get_property", "pause"], timeout=2.0)
-        if rp and rp.get("error") == "success":
-            pos = rp.get("data")
-            # mpv peut rapporter une position tres legerement negative (seek en
-            # debut de flux) : on ne l'expose jamais, le temps minimal est 0.
-            if isinstance(pos, (int, float)) and pos < 0:
-                pos = 0.0
-        if rd and rd.get("error") == "success":
-            dur = rd.get("data")
-        if rpa and rpa.get("error") == "success":
-            paused = bool(rpa.get("data"))
+        else:
+            # Le daemon tient un media : l'interface refleche la realite. Meme un
+            # chargement parti apres un timeout de `loadfile` (lentement servi)
+            # devient visible et controlable au lieu de rester un son muet/ignore.
+            state._now_playing = True
+            rp = _ipc_send(["get_property", "time-pos"], timeout=2.0)
+            rd = _ipc_send(["get_property", "duration"], timeout=2.0)
+            rpa = _ipc_send(["get_property", "pause"], timeout=2.0)
+            if rp and rp.get("error") == "success":
+                pos = rp.get("data")
+                # mpv peut rapporter une position tres legerement negative (seek en
+                # debut de flux) : on ne l'expose jamais, le temps minimal est 0.
+                if isinstance(pos, (int, float)) and pos < 0:
+                    pos = 0.0
+            if rd and rd.get("error") == "success":
+                dur = rd.get("data")
+            if rpa and rpa.get("error") == "success":
+                paused = bool(rpa.get("data"))
     meta = _meta(hist_read(1)[0]["video_id"]) if hist_read(1) else None
     # Repli sur la duree connue du titre : mpv rapporte 0 pendant le chargement
     # d'un fichier, ce qui recadrerait la barre de progression au debut.

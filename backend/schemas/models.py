@@ -127,3 +127,16 @@ class ChatRequest(BaseModel):
     max_messages: int = Field(20, ge=1, le=100)
     # « global » : assistant musical ; « profile » : assistant dedie aux gouts.
     scope: Literal["global", "profile"] = "global"
+
+
+# --------------------------- Transfert mobile ----------------------------------
+class TransferRequest(BaseModel):
+    """Playlist a transferer vers le telephone (le bureau ouvre la session)."""
+
+    playlist_id: str = Field(..., description="Identifiant ou nom de la playlist")
+    mode: str = Field(
+        "",
+        description="« emulateur » pour que le code porte l'adresse vue depuis "
+        "l'émulateur Android (10.0.2.2) plutôt que celle du réseau local",
+    )
+
