@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from routers import (
-    chat, discover, health, playback, playlists, profile, realtime,
+    chat, discover, health, lyrics, playback, playlists, profile, realtime,
     recommendation, search, stats, streaming, transfer,
 )
 # Alias : `covers` designe deja le service (pochettes HQ) plus bas dans ce module.
@@ -103,7 +103,7 @@ app.add_middleware(
 
 for _router in (health, search, playback, recommendation, streaming,
                 playlists, discover, profile, chat, stats, realtime,
-                covers_router, transfer):
+                covers_router, transfer, lyrics):
     app.include_router(_router.router)
 
 

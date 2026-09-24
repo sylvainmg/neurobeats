@@ -98,6 +98,40 @@ COVERS_MATCH_MIN = 0.80
 COVERS_SSIM_MIN = 0.55
 FFMPEG = shutil.which("ffmpeg") or ""
 
+# --- Paroles -----------------------------------------------------------------
+# Deux delais de patience distincts : une paroles trouvee ne change quasi jamais
+# (TTL long), alors qu'une absence est temporaire le plus souvent (LRCLIB enrichi,
+# titre sorti d'une vagues de saisie) — le cache negatif reste donc court. Sans
+# cache, chaque titre rejoue chercherait les memes sources gratuites : un hit
+# reseau existe, LRCLIB impose un rate-limit genereux mais un.
+def _lyrics_ttl_days() -> int:
+    try:
+        return max(1, int(os.environ.get("NEUROBEATS_LYRICS_TTL_DAYS", 30)))
+    except (TypeError, ValueError):
+        return 30
+
+
+def _lyrics_miss_ttl_days() -> int:
+    try:
+        return max(1, int(os.environ.get("NEUROBEATS_LYRICS_MISS_TTL_DAYS", 7)))
+    except (TypeError, ValueError):
+        return 7
+
+
+# Paroles : sources gratuites (LRCLIB puis Genius), sans cle d'API.
+# NEUROBEATS_LYRICS=0 coupe tout (l'UI affiche alors le repli « aucune parole »).
+LYRICS_ENABLED = os.environ.get("NEUROBEATS_LYRICS", "1") != "0"
+LYRICS_TTL_DAYS = _lyrics_ttl_days()
+LYRICS_MISS_TTL_DAYS = _lyrics_miss_ttl_days()
+# Borne volontairement courte : une source lente ne doit pas retarder le panneau
+# ; le repli Genius est alors skippe plutot que d'attendre son tour.
+LYRICS_TIMEOUT = _int_env("NEUROBEATS_LYRICS_TIMEOUT", 12, 3)
+# Confiance minimale du rapprochement paroles <-> titre (LRCLIB search, Genius).
+# Plus souple que COVERS_MATCH_MIN : les bases de paroles ecrivent les titres
+# autrement (feat., ponctuation), et une paroles rattachee au bon artiste reste
+# acceptable meme si le titre differe legerement.
+LYRICS_MATCH_MIN = 0.55
+
 # Metadonnees completes d'une video (PAS extract_flat : on veut les vignettes
 # publiees, la duree et les formats). Sert au choix de la source des pochettes.
 YDL_INFO_OPTS = {

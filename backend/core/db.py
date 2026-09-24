@@ -9,6 +9,7 @@ Tables :
   embeddings(video_id, model_name, dim, embedding, created_at)
   genres(key, genre, created_at)
   covers(video_id, source, provider, offset, match_score, width, height, bytes)
+  lyrics(video_id, status, source, synced, instrumental, title, artist, payload, error)
 """
 import json
 import os
@@ -55,13 +56,21 @@ CREATE TABLE IF NOT EXISTS covers (
   bytes INTEGER DEFAULT 0, created_at TEXT DEFAULT '', last_used TEXT DEFAULT '',
   error TEXT DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS lyrics (
+  video_id TEXT PRIMARY KEY, status TEXT NOT NULL, source TEXT DEFAULT '',
+  synced INTEGER DEFAULT 0, instrumental INTEGER DEFAULT 0,
+  title TEXT DEFAULT '', artist TEXT DEFAULT '',
+  payload TEXT DEFAULT '', error TEXT DEFAULT '',
+  created_at TEXT DEFAULT '', last_used TEXT DEFAULT ''
+);
 """
 
 _HOUR_SLOTS = [(6, 12, "matin"), (12, 14, "midi"), (14, 18, "apres-midi"),
                (18, 24, "soir"), (0, 6, "nuit")]
 
 # Cles du profil utilisateur stockees dans la table `kv`.
-_PROFILE_KEYS = ("preferences", "genres_favoris", "playlists", "identity")
+# `ai` = config du modele (fournisseur, URL, modele, cle API) — voir services/llm.py.
+_PROFILE_KEYS = ("preferences", "genres_favoris", "playlists", "identity", "ai")
 
 # Revisions publiees au client (la base est la source de verite) : incrementees a
 # chaque ecriture qui fait bouger les donnees correspondantes. Le front s'en sert
@@ -353,11 +362,11 @@ def db_set_favorite(channel: str, favorite: bool = True) -> list:
 
 
 def db_clear_derived_caches() -> dict:
-    """Vide les caches derives (genres inferes, embeddings). Retourne les compteurs."""
+    """Vide les caches derives (genres inferes, embeddings, paroles). Retourne les compteurs."""
     con = _connect()
     try:
         removed = {}
-        for table in ("genres", "embeddings"):
+        for table in ("genres", "embeddings", "lyrics"):
             cur = con.execute(f"DELETE FROM {table}")
             removed[table] = cur.rowcount
         con.commit()
@@ -372,7 +381,7 @@ def db_count_rows() -> dict:
     con = _connect()
     try:
         out = {}
-        for table in ("history", "stats_genre", "stats_channel", "embeddings", "genres"):
+        for table in ("history", "stats_genre", "stats_channel", "embeddings", "genres", "lyrics"):
             out[table] = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         return out
     finally:
@@ -547,6 +556,58 @@ def db_cover_touch(video_id):
     con = _connect()
     try:
         con.execute("UPDATE covers SET last_used=? WHERE video_id=?",
+                    (datetime.now().isoformat(), video_id))
+        con.commit()
+    finally:
+        con.close()
+
+
+_LYRICS_FIELDS = ("status", "source", "synced", "instrumental", "title",
+                  "artist", "payload", "error")
+
+
+def db_lyrics_get(video_id):
+    """Paroles en cache pour un titre, ou None (jamais demandees).
+
+    `status` vaut 'hit' (paroles trouvees, `payload` = JSON des lignes) ou
+    'miss' (aucune source ne les avait : cache negatif, porte par `created_at`
+    pour ne pas re-solliciter les sources trop tot).
+    """
+    con = _connect()
+    try:
+        row = con.execute("SELECT * FROM lyrics WHERE video_id=?", (video_id,)).fetchone()
+        return dict(row) if row is not None else None
+    finally:
+        con.close()
+
+
+def db_lyrics_put(video_id, **fields):
+    """Enregistre les paroles trouvees — ou l'echec de recherche (`status='miss'`).
+
+    Meme logique que les pochettes : la table est la memoire longue, les sources
+    gratuites (LRCLIB/Genius) ne sont sollicitees qu'une fois par titre, et le
+    cache negatif court (LYRICS_MISS_TTL_DAYS) permet de retenter apres quelques
+    jours sans bloquer les corrections de paroles.
+    """
+    now = datetime.now().isoformat()
+    columns = ", ".join(_LYRICS_FIELDS)
+    placeholders = ", ".join("?" * len(_LYRICS_FIELDS))
+    con = _connect()
+    try:
+        con.execute(
+            f"INSERT OR REPLACE INTO lyrics (video_id, {columns}, created_at, last_used)"
+            f" VALUES (?, {placeholders}, ?, ?)",
+            (video_id, *(fields.get(key) for key in _LYRICS_FIELDS), now, now))
+        con.commit()
+    finally:
+        con.close()
+
+
+def db_lyrics_touch(video_id):
+    """Marque les paroles comme recemment servies (statistiques d'usage)."""
+    con = _connect()
+    try:
+        con.execute("UPDATE lyrics SET last_used=? WHERE video_id=?",
                     (datetime.now().isoformat(), video_id))
         con.commit()
     finally:
