@@ -1,4 +1,4 @@
-"""Chat serveur : boucle Ollama + tools, historique fourni par le client (tronque).
+"""Chat serveur : boucle LLM + tools, historique fourni par le client (tronque).
 
 Deux entrees :
 - `chat()` : reponse complete (bloquant) pour POST /api/chat ;
@@ -6,24 +6,22 @@ Deux entrees :
 
 Toutes deux partagent la preparation du contexte (`_prepare_convo`), l'execution
 d'un outil (`_run_tool`) et la troncature de sortie (`_tail`).
+
+Le fournisseur, le modele et l'URL viennent de la config IA (`services.llm`) :
+Ollama local par defaut, OU LM Studio / OpenAI-compatible / Anthropic.
 """
 import json
+import re
 
-import ollama
-
-from core.config import BASE, MODEL
+from core.config import BASE
 from core.history import MAX_MESSAGES_DEFAULT, truncate_messages
+from services import llm
 from services.state import _tprint
-
-# Client borne : le defaut (httpx.Timeout(timeout=None)) laisse un appel Ollama
-# pendre indefiniment. 120s large : le chat peut etre long, mais pas infini.
-_OLLAMA = ollama.Client(timeout=120.0)
 
 # Fenetre de contexte passee a Ollama. Sans `options`, la valeur par defaut du
 # modele s'applique : pour un historique + des resultats d'outils, on la fixe
 # explicitement afin de rester previsible.
 _NUM_CTX = 4096
-_CHAT_OPTIONS = {"num_ctx": _NUM_CTX}
 
 # Borne sur les tours d'outils : sans elle, un modele qui rappelle un outil en
 # boucle (ex. recherche en ligne) ferait tourner la requete indefiniment.
@@ -183,9 +181,25 @@ def _prepare_convo(messages, max_messages, scope: str = "global"):
     return convo
 
 
+def _coerce_args(args):
+    """Normalise des arguments d'outil en dict (JSON string -> dict, sinon {})."""
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except (TypeError, json.JSONDecodeError):
+            args = {}
+    return args if isinstance(args, dict) else {}
+
+
 def _run_tool(functions, name, args):
-    """Execute un tool ; retourne (ok, resultat_serialise). Ne leve jamais."""
+    """Execute un tool ; retourne (ok, resultat_serialise). Ne leve jamais.
+
+    Les providers OpenAI-compatibles (LM Studio / BYOK) exposent `arguments` en
+    JSON string ; Ollama le fournit deja en dict. On normalise avant l'appel,
+    sinon `fn(**str)` leve TypeError et le tool echoue en rouge a tort.
+    """
     fn = functions.get(name)
+    args = _coerce_args(args)
     try:
         result = fn(**args) if fn else json.dumps({"error": f"Tool inconnu: {name}"})
     except Exception as exc:
@@ -193,6 +207,60 @@ def _run_tool(functions, name, args):
     if fn is None:
         return False, result
     return True, result
+
+
+# ----------------------------------------------------------------- appel d'outil en texte
+# Certains modeles (gemma-2, qwen3…) n'ont pas de support natif d'outil : LM
+# Studio, ou le modele lui-meme, renvoient alors l'appel en `content` plutôt que
+# dans `tool_calls` structure. Le format est celui du template Qwen2.5
+# (`<tool_call><function=..><parameter=k>v</parameter></tool_call>`) ou un JSON
+# emboite. On le rechange pour ne pas laisser ces appels tomber en reponse texte.
+_TEXT_TOOL_BLOCK_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.S)
+
+
+def _parse_text_tool_call(text: str) -> dict | None:
+    """Parse un bloc `<tool_call>…</tool_call>` en appel d'outil interne.
+
+    Args:
+        text: Contenu du message assistant.
+
+    Returns:
+        `{"function": {"name", "arguments"}}` si un bloc bien forme est trouve,
+        sinon None. Le nom n'est PAS verifie ici : la rechange le croise avec la
+        table des outils avant de dispatcher (anti-faux-positif d'une prose qui
+        evoque les outils).
+    """
+    match = _TEXT_TOOL_BLOCK_RE.search(text or "")
+    if not match:
+        return None
+    block = match.group(1).strip()
+    # Forme JSON emboitee : {"name": .., "arguments": {..}}.
+    try:
+        data = json.loads(block)
+    except (TypeError, json.JSONDecodeError):
+        data = None
+    if isinstance(data, dict) and isinstance(data.get("name"), str) and data.get("name"):
+        args = data.get("arguments") or {}
+        if not isinstance(args, dict):
+            args = {}
+        return {"function": {"name": data["name"], "arguments": args}}
+    # Forme tags Qwen2.5 : <function=nom> + <parameter=cle>valeur</parameter>.
+    fm = (re.search(r"<function=([^>\n]+)>", block)
+          or re.search(r"<function>([^<]+)</function>", block))
+    if not fm:
+        return None
+    name = fm.group(1).strip()
+    if not name:
+        return None
+    params = {}
+    for pm in re.finditer(r"<parameter=([^>\n]+)>([^<]*)</parameter>", block):
+        params[pm.group(1).strip()] = pm.group(2).strip()
+    return {"function": {"name": name, "arguments": params}}
+
+
+def _strip_text_tool(text: str) -> str:
+    """Retire les blocs `<tool_call>` d'un message (afin de garder la prose)."""
+    return _TEXT_TOOL_BLOCK_RE.sub("", text or "").strip()
 
 
 def _label(name):
@@ -265,28 +333,39 @@ def chat(messages, max_messages=MAX_MESSAGES_DEFAULT, scope: str = "global"):
     functions = _tool_functions()
     convo = _prepare_convo(messages, max_messages, scope)
 
-    response = _OLLAMA.chat(model=MODEL, messages=convo, tools=tools, options=_CHAT_OPTIONS)
+    response = llm.chat(convo, tools=tools, num_ctx=_NUM_CTX)
     msg = _msg_dict(response["message"])
     invoked = []
     rounds = 0
 
-    while msg.get("tool_calls"):
+    while True:
+        calls = msg.get("tool_calls") or []
+        # Rechange : LM Studio renvoie parfois l'appel d'outil en texte
+        # (`<tool_call>` dans content) quand il echoue a le structurer.
+        if not calls and rounds < MAX_TOOL_ROUNDS:
+            text_tool = _parse_text_tool_call(msg.get("content", ""))
+            if text_tool and text_tool["function"]["name"] in functions:
+                msg = {**msg, "content": _strip_text_tool(msg.get("content", "")),
+                       "tool_calls": [text_tool]}
+                calls = [text_tool]
+        if not calls:
+            break
         if rounds >= MAX_TOOL_ROUNDS:
             # Trop d'allers-retours d'outils : on demande une reponse finale sans
             # outils plutot que de boucler.
             _tprint(f"[chat] {MAX_TOOL_ROUNDS} tours d'outils atteints, reponse finale")
-            final = _OLLAMA.chat(model=MODEL, messages=convo, options=_CHAT_OPTIONS)
+            final = llm.chat(convo, num_ctx=_NUM_CTX)
             msg = _msg_dict(final["message"])
             break
         rounds += 1
         convo.append(msg)
-        for call in msg["tool_calls"]:
+        for call in calls:
             name = call["function"]["name"]
-            args = call["function"].get("arguments", {}) or {}
+            args = _coerce_args(call["function"].get("arguments", {}) or {})
             ok, result = _run_tool(functions, name, args)
             invoked.append({"name": name, "arguments": args, "ok": ok})
             convo.append({"role": "tool", "content": str(result)})
-        response = _OLLAMA.chat(model=MODEL, messages=convo, tools=tools, options=_CHAT_OPTIONS)
+        response = llm.chat(convo, tools=tools, num_ctx=_NUM_CTX)
         msg = _msg_dict(response["message"])
 
     reply = msg.get("content", "")
@@ -314,8 +393,7 @@ def chat_stream(messages, max_messages=MAX_MESSAGES_DEFAULT, scope: str = "globa
         exhausted = rounds >= MAX_TOOL_ROUNDS
         if exhausted:
             _tprint(f"[chat] {MAX_TOOL_ROUNDS} tours d'outils atteints, reponse finale")
-        stream = _OLLAMA.chat(model=MODEL, messages=convo, tools=None if exhausted else tools,
-                              stream=True, options=_CHAT_OPTIONS)
+        stream = llm.chat_stream(convo, tools=None if exhausted else tools, num_ctx=_NUM_CTX)
         try:
             for chunk in stream:
                 msg = chunk.get("message") if isinstance(chunk, dict) else getattr(chunk, "message", None)
@@ -339,6 +417,12 @@ def chat_stream(messages, max_messages=MAX_MESSAGES_DEFAULT, scope: str = "globa
         calls = [{"function": {"name": v["name"], "arguments": v["arguments"]}}
                  for _, v in sorted(acc.items()) if v["name"]]
         assistant = {"role": "assistant", "content": "".join(parts)}
+        if not calls and not exhausted:
+            # Rechange : meme appel d'outil, mais sous forme de texte.
+            text_tool = _parse_text_tool_call(assistant["content"])
+            if text_tool and text_tool["function"]["name"] in functions:
+                assistant["content"] = _strip_text_tool(assistant["content"])
+                calls = [text_tool]
         if not calls or exhausted:
             convo.append(assistant)
             break
@@ -347,7 +431,7 @@ def chat_stream(messages, max_messages=MAX_MESSAGES_DEFAULT, scope: str = "globa
         convo.append(assistant)
         for call in calls:
             name = call["function"]["name"]
-            args = call["function"].get("arguments", {}) or {}
+            args = _coerce_args(call["function"].get("arguments", {}) or {})
             yield {"type": "tool_start", "name": name, "arguments": args, **_label(name)}
             ok, result = _run_tool(functions, name, args)
             invoked.append({"name": name, "ok": ok})

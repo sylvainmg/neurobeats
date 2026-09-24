@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, History, MessageSquarePlus, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { AiSetupBanner } from "@/components/chat/ai-setup-banner";
 import { ChatComposer, ChatMessages } from "@/components/chat/chat-messages";
 import { ChatHistory } from "@/components/chat/chat-history";
 import { useChatConversation } from "@/components/chat/use-chat";
@@ -146,6 +147,8 @@ export function TasteAssistant({ active }: { active: boolean }) {
         />
       ) : (
         <>
+          {/* Bandeau discret si aucun modèle IA n'est réglé (le reste fonctionne). */}
+          <AiSetupBanner />
           {empty ? (
             <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5 overflow-y-auto p-6 text-center">
               <span className="bg-primary/15 text-primary grid size-14 place-items-center rounded-full">

@@ -14,9 +14,7 @@ import threading
 import time
 from collections import Counter
 
-import ollama
-
-from core.config import MODEL
+from services import llm
 from services.chat import SUGGEST_SYSTEM
 from services.db_access import hist_read
 from services.genres import GENERIC_CHANNELS
@@ -25,10 +23,6 @@ from services.websearch import web_search
 
 SUGGEST_TTL = 900
 MAX_SUGGESTIONS = 6
-
-# Appel LLM dedie : sortie JSON imposee (`format="json"`), sans boucle d'outils —
-# les extraits web sont collectes cote serveur et fournis dans le prompt.
-_OLLAMA = ollama.Client(timeout=120.0)
 
 _LOCK = threading.Lock()
 _CACHE: dict = {}
@@ -131,14 +125,14 @@ def _parse_suggestions(reply: str, artists: list | None = None) -> list:
 
 def _ask_llm(payload: dict) -> str:
     """Demande les libelles au LLM (JSON impose, sans outils)."""
-    response = _OLLAMA.chat(
-        model=MODEL,
+    response = llm.chat(
         messages=[
             {"role": "system", "content": SUGGEST_SYSTEM},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ],
-        options={"temperature": 0.4},
-        format="json",
+        temperature=0.4,
+        json_mode=True,
+        timeout=120.0,
     )
     message = response.get("message") or {}
     return message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")

@@ -1,4 +1,6 @@
 ollama
+openai
+anthropic
 yt-dlp
 sentence-transformers
 scikit-learn

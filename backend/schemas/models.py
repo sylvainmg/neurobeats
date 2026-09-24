@@ -77,6 +77,18 @@ class AvatarRequest(BaseModel):
     avatar: str = Field(..., description="Photo en data URL (image png, jpeg ou webp)")
 
 
+class AiSettingsRequest(BaseModel):
+    """Reglages IA : fournisseur actif + blocs par provider (secrets inclus).
+
+    `api_key` absent (None) = conserve l'existante ; `""` = l'efface.
+    """
+    provider: Optional[str] = None
+    ollama: Optional[dict] = None
+    lmstudio: Optional[dict] = None
+    openai: Optional[dict] = None
+    anthropic: Optional[dict] = None
+
+
 # ----------------------------- Playlists --------------------------------------
 class PlaylistCreateRequest(BaseModel):
     # `mood` renseigne => generation IA (recommandations) ; vide => playlist vide.

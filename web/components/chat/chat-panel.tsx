@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, History, MessageSquarePlus, Sparkles, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { AiSetupBanner } from "@/components/chat/ai-setup-banner";
 import { ChatComposer, ChatMessages } from "@/components/chat/chat-messages";
 import { ChatHistory } from "@/components/chat/chat-history";
 import { useChatConversation } from "@/components/chat/use-chat";
@@ -108,6 +109,7 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
           />
         ) : (
           <>
+            <AiSetupBanner />
             <ChatMessages
               messages={chat.messages}
               streamingText={chat.streamText}

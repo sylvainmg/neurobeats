@@ -49,6 +49,29 @@ export interface NowPlayingState {
   duration: number | null;
 }
 
+/** Ligne de paroles : horodatée (synchro) ou non (texte → défilement estimé). */
+export interface LyricLine {
+  /** Instant de début en secondes, `null` pour les paroles non synchronisées. */
+  time: number | null;
+  text: string;
+}
+
+/** Réponse de GET /api/lyrics. */
+export interface LyricsPayload {
+  found: boolean;
+  /** `true` = lignes horodatées (karaoké) ; `false` = texte brut. */
+  synced: boolean;
+  source: "lrclib" | "genius" | null;
+  instrumental: boolean;
+  title: string;
+  artist: string;
+  lines: LyricLine[];
+  /** Détail — présent uniquement quand `found:false` et `retryable:true`. */
+  message: string | null;
+  /** Panne réseau transitoire : l'UI propose « Réessayer ». */
+  retryable?: boolean;
+}
+
 /** Titre affiché sur l'accueil (bloc « Reprendre » ou recommandation). */
 export interface HomeTrack {
   video_id: string;
@@ -106,6 +129,19 @@ export interface Playlist {
   songs: PlaylistTrack[];
   created: string;
   updated: string;
+}
+
+/** Session de transfert vers le téléphone (POST /api/transfer). */
+export interface TransferTicket {
+  session: string;
+  /** Le lien encodé dans le code QR (session + jeton, réseau local). */
+  url: string;
+  expire_dans: number;
+  playlist: string;
+  titres: number;
+  /** Titres déjà en mémoire côté bureau : transférés sans repasser par YouTube. */
+  prets: number;
+  a_preparer: number;
 }
 
 /** Résumé de playlist (GET /api/playlists). */
@@ -234,6 +270,35 @@ export interface SearchSuggestion {
   query: string;
 }
 
+/** Réglages du modèle IA (GET/PUT /api/profile/ai). Cle API toujours masquée. */
+export interface AiSettings {
+  provider: "ollama" | "lmstudio" | "openai" | "anthropic";
+  configured: boolean;
+  label: string;
+  ollama: { host?: string; model?: string };
+  lmstudio: { base_url?: string; model?: string };
+  openai: { base_url?: string; model?: string; api_key_masked?: string };
+  anthropic: { base_url?: string; model?: string; api_key_masked?: string };
+}
+
+/** Corps de la mise à jour : `api_key` absent (undefined) = conservée, "" = effacée. */
+export interface AiSettingsPatch {
+  provider?: AiSettings["provider"];
+  ollama?: Partial<AiSettings["ollama"]>;
+  lmstudio?: Partial<AiSettings["lmstudio"]>;
+  openai?: Partial<AiSettings["openai"]> & { api_key?: string };
+  anthropic?: Partial<AiSettings["anthropic"]> & { api_key?: string };
+}
+
+/** Réponse de POST /api/profile/ai/test. */
+export interface AiTestResult {
+  ok: boolean;
+  latency_ms?: number;
+  provider?: string;
+  model?: string;
+  error?: string;
+}
+
 /**
  * Wrapper fetch vers le backend.
  *
@@ -254,7 +319,10 @@ export async function apiFetch<T = unknown>(
         ...init?.headers,
       },
     });
-  } catch {
+  } catch (err) {
+    // Requête annulée volontairement (choix plus récent de l'utilisateur) : on
+    // propage l'AbortError tel quel pour que l'appelant la distingue d'une panne.
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
     throw new ApiError(`Backend injoignable (${API_URL})`, 0);
   }
 
@@ -275,9 +343,10 @@ export async function apiFetch<T = unknown>(
   return body?.data as T;
 }
 
-function post<T>(path: string, body?: unknown) {
+function post<T>(path: string, body?: unknown, init?: RequestInit) {
   return apiFetch<T>(path, {
     method: "POST",
+    ...init,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
@@ -286,8 +355,10 @@ export const api = {
   health: () => apiFetch("/api/health"),
 
   // Recherche
-  search: (q: string, limit = 10) =>
-    apiFetch<Track[]>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+  search: (q: string, limit = 10, signal?: AbortSignal) =>
+    apiFetch<Track[]>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`, {
+      signal,
+    }),
   searchSuggestions: () =>
     apiFetch<{ suggestions: SearchSuggestion[]; building: boolean }>(
       "/api/search/suggestions",
@@ -297,7 +368,8 @@ export const api = {
 
   // Lecture
   now: () => apiFetch<NowPlayingState>("/api/now"),
-  play: (video_id: string) => post<NowPlayingState>("/api/play", { video_id }),
+  play: (video_id: string, signal?: AbortSignal) =>
+    post<NowPlayingState>("/api/play", { video_id }, { signal }),
   playNow: (query: string) => post<NowPlayingState>("/api/play_now", { query }),
   playChoice: (index: number) => post("/api/play_choice", { index }),
   stop: () => post<{ status: string }>("/api/stop"),
@@ -306,6 +378,22 @@ export const api = {
     post<{ status: string; position: number }>("/api/seek", { position }),
   volume: (volume: number) =>
     post<{ status: string; volume: number }>("/api/volume", { volume }),
+
+  // Paroles (GET /api/lyrics) — titre/chaine/duree sont des replis : le serveur
+  // résout ses propres métadonnées, ces params ne servent qu'aux titres pas
+  // encore joués.
+  lyrics: (
+    videoId: string,
+    title: string,
+    channel: string,
+    duration?: number | null,
+  ) => {
+    const params = new URLSearchParams({ video_id: videoId });
+    if (title) params.set("title", title);
+    if (channel) params.set("channel", channel);
+    if (duration && duration > 0) params.set("duration", String(duration));
+    return apiFetch<LyricsPayload>(`/api/lyrics?${params.toString()}`);
+  },
 
   // File / streaming
   queue: () => apiFetch<QueueState>("/api/stream/queue"),
@@ -363,8 +451,10 @@ export const api = {
       method: "DELETE",
     }),
   profileData: () => apiFetch<ProfileOverview>("/api/profile/data"),
-  profileHistory: (limit = 100) =>
-    apiFetch<{ entries: HistoryEntry[] }>(`/api/profile/history?limit=${limit}`),
+  profileHistory: (limit = 100, offset = 0) =>
+    apiFetch<{ entries: HistoryEntry[] }>(
+      `/api/profile/history?limit=${limit}&offset=${offset}`,
+    ),
   deleteHistoryEntry: (entryId: number) =>
     apiFetch<{ status: string }>(`/api/profile/history/${entryId}`, { method: "DELETE" }),
   clearHistory: () =>
@@ -390,6 +480,32 @@ export const api = {
     ),
   clearCaches: () =>
     post<{ status: string; removed: Record<string, number> }>("/api/profile/caches/clear"),
+
+  // Modèle IA (onglet « IA » du profil) — clés API masquées par le backend.
+  getAiSettings: () => apiFetch<AiSettings>("/api/profile/ai"),
+  saveAiSettings: (body: AiSettingsPatch) =>
+    apiFetch<AiSettings>("/api/profile/ai", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  /**
+   * Vérifie que la config répond. Le corps optionnel porte les valeurs en cours
+   * d'édition (formulaire non sauvé) : le backend les teste sans rien persister.
+   * On normalise toujours en AiTestResult (200+{ok:false} ou erreur réseau).
+   */
+  testAiConnection: async (body?: AiSettingsPatch): Promise<AiTestResult> => {
+    try {
+      return await apiFetch<AiTestResult>("/api/profile/ai/test", {
+        method: "POST",
+        body: JSON.stringify(body ?? {}),
+      });
+    } catch (err) {
+      if (err instanceof ApiError) {
+        return { ok: false, provider: undefined, error: err.message };
+      }
+      return { ok: false, error: "Backend injoignable." };
+    }
+  },
 
   // Notes ★
   setPreference: (video_id: string, rating: number) =>
@@ -433,6 +549,14 @@ export const api = {
       `/api/playlists/${encodeURIComponent(id)}/tracks`,
       { video_id: videoId },
     ),
+  /**
+   * Ouvre une session de transfert et rend le code à afficher.
+   *
+   * Réservé au bureau : le backend refuse la création depuis une autre machine,
+   * le code étant une clé d'accès au réseau local.
+   */
+  mintTransfer: (playlistId: string) =>
+    post<TransferTicket>("/api/transfer", { playlist_id: playlistId }),
   removePlaylistTrack: (id: string, videoId: string) =>
     apiFetch<{ status: string; playlist: Playlist }>(
       `/api/playlists/${encodeURIComponent(id)}/tracks/${encodeURIComponent(videoId)}`,

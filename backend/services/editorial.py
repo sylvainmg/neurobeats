@@ -1,19 +1,14 @@
 """Habillage editorial : titre de section + accroche rediges par le LLM.
 
 Le LLM ne choisit jamais les titres (c'est le moteur de reco) : il met en mots une
-selection deja faite. Repli neutre si Ollama est indisponible — la page reste utile.
+selection deja faite. Repli neutre si l'IA est indisponible — la page reste utile.
 
 Partage par l'accueil et Decouvrir.
 """
 import json
 
-import ollama
-
-from core.config import MODEL
+from services import llm
 from services.state import _tprint
-
-# Ollama peut etre lent : on ne bloque jamais l'utilisateur pour un habillage.
-_OLLAMA = ollama.Client(timeout=25.0)
 
 FALLBACK_TITLE = "Recommandé pour toi"
 FALLBACK_INTRO = "Une sélection tirée de tes écoutes et affinée par l'IA."
@@ -40,11 +35,11 @@ def llm_copy(tracks: list, genre: str, instructions: str = "") -> tuple[str, str
         'Reponds STRICTEMENT en JSON : {"titre": "...", "accroche": "..."}'
     )
     try:
-        resp = _OLLAMA.chat(
-            model=MODEL,
+        resp = llm.chat(
             messages=[{"role": "user", "content": prompt}],
-            options={"temperature": 0.6},
-            format="json",
+            temperature=0.6,
+            json_mode=True,
+            timeout=25.0,
         )
         data = json.loads(resp["message"]["content"])
         title = str(data.get("titre", "")).strip()

@@ -1,17 +1,11 @@
-"""Genres musicaux : mapping cure, auto-tagging Ollama, filtrage dur."""
+"""Genres musicaux : mapping cure, auto-tagging LLM, filtrage dur."""
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-import ollama
-
-from core.config import MODEL
+from services import llm
 from services.db_access import _db_ready
 from services.state import _tprint
-
-# Client avec timeout : le defaut du client est httpx.Timeout(timeout=None), donc
-# un Ollama qui pend bloquait indefiniment la reco (donc le remplissage de file).
-_OLLAMA = ollama.Client(timeout=30.0)
 
 # Mapping cure (chaines d'ARTISTES uniquement). Ne mapper QUE des artistes : les chaines
 # generiques (lyrics/paroles/compil, multi-artistes) vont dans GENERIC_CHANNELS -> "autre",
@@ -112,13 +106,13 @@ def infer_genre_ollama(title, channel):
         f"Reponds UNIQUEMENT par un genre parmi: {', '.join(GENRE_LABELS)}. Un seul mot."
     )
     try:
-        resp = _OLLAMA.chat(model=MODEL, messages=[{"role": "user", "content": prompt}],
-                            options={"temperature": 0})
+        resp = llm.chat(messages=[{"role": "user", "content": prompt}],
+                        temperature=0, timeout=30.0)
         genre = _parse_genre_label(resp["message"]["content"])
         _tprint(f"[genre-infer] {title[:35]!r} / {channel[:18]!r} → {genre}")
     except Exception as exc:
         genre = "autre"
-        _tprint(f"[genre-infer-fallback] Ollama indisponible ({type(exc).__name__}), "
+        _tprint(f"[genre-infer-fallback] IA indisponible ({type(exc).__name__}), "
                 f"{title[:28]!r} → {genre}")
     with _genre_cache_lock:
         _GENRE_CACHE[key] = genre

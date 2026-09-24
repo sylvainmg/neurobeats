@@ -1,8 +1,12 @@
 """Profil : identite, statistiques et gestion des donnees recoltees."""
 from fastapi import APIRouter
+from typing import Optional
 
-from dependencies.responses import TIMEOUT_SHORT, run_tool, to_response
-from schemas.models import ApiResponse, AvatarRequest, IdentityUpdateRequest
+from dependencies.responses import TIMEOUT_LONG, TIMEOUT_SHORT, run_tool, to_response
+from schemas.models import (
+    AiSettingsRequest, ApiResponse, AvatarRequest, IdentityUpdateRequest,
+)
+from services import llm
 from services.profile import (
     add_favorite, clear_avatar, clear_caches, clear_history, data_overview,
     delete_history_entry, delete_preference, get_profile, list_favorites,
@@ -112,4 +116,47 @@ async def profile_favorite_remove(channel: str):
 async def profile_caches_clear():
     """Vide les caches derives (genres inferes, embeddings, URLs audio)."""
     code, res = await run_tool(clear_caches, timeout=TIMEOUT_SHORT)
+    return to_response(code, res)
+
+
+# ------------------------------------------------------------------- modele IA
+
+@router.get("/ai", response_model=ApiResponse)
+async def profile_ai_get():
+    """Reglages du modele IA : fournisseur, URL, modele (cle masquee) + `configured`."""
+    code, res = await run_tool(llm.get_ai_config, timeout=TIMEOUT_SHORT)
+    return to_response(code, res)
+
+
+@router.put("/ai", response_model=ApiResponse)
+async def profile_ai_update(body: AiSettingsRequest):
+    """Enregistre les reglages IA.
+
+    `api_key` absent = conservee ; `""` = effacee. Renvoie la config masquee.
+    """
+    code, res = await run_tool(
+        llm.save_ai_config, timeout=TIMEOUT_SHORT,
+        provider=body.provider, ollama=body.ollama, lmstudio=body.lmstudio,
+        openai=body.openai, anthropic=body.anthropic,
+    )
+    return to_response(code, res)
+
+
+@router.post("/ai/test", response_model=ApiResponse)
+async def profile_ai_test(body: Optional[AiSettingsRequest] = None):
+    """Verifie que le fournisseur repond (prompt court, latence mesuree).
+
+    Sans corps : teste la config enregistree. Avec corps : epouse les valeurs
+    volantes du formulaire (URL, modele, cle) sans rien persister — le bouton
+    « Tester » du profil ne teste donc plus la config déjà sauvée.
+    """
+    kwargs = {}
+    if body is not None:
+        if body.provider is not None:
+            kwargs["provider"] = body.provider
+        for name in ("ollama", "lmstudio", "openai", "anthropic"):
+            block = getattr(body, name)
+            if block:
+                kwargs[name] = block
+    code, res = await run_tool(llm.test_connection, timeout=TIMEOUT_LONG, **kwargs)
     return to_response(code, res)
