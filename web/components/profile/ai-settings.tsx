@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BrainCircuit, CheckCircle2, Loader2, PlugZap, XCircle } from "lucide-react";
+import { BrainCircuit, CheckCircle2, Eye, EyeOff, Loader2, PlugZap, XCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { api, type AiSettings, type AiSettingsPatch } from "@/lib/api";
@@ -202,6 +202,7 @@ export function AiSettingsForm() {
   const [url, setUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [clearedKey, setClearedKey] = useState(false);
+  const [showKey, setShowKey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{
@@ -234,8 +235,6 @@ export function AiSettingsForm() {
 
   const needsKey = provider === "openai" || provider === "anthropic";
   const ui: UiProvider = uiOf(provider);
-  const maskedKey =
-    (settings?.[provider] as { api_key_masked?: string } | undefined)?.api_key_masked ?? "";
 
   // « Enregistré » : le formulaire affiché est la config réellement servie
   // (settings.provider) ET intouchée. Dès qu'un champ est modifié — ou une clé
@@ -457,29 +456,34 @@ export function AiSettingsForm() {
 
         {needsKey && (
           <div>
-            <span className="text-muted-foreground mb-1.5 block text-xs">
-              Clé API
-            </span>
+            <span className="text-muted-foreground mb-1.5 block text-xs">Clé API</span>
             <div className="flex items-center gap-2">
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(event) => {
-                  setApiKey(event.target.value);
-                  if (event.target.value) setClearedKey(false);
-                }}
-                placeholder={
-                  maskedKey
-                    ? `Enregistrée : ${maskedKey} — laisse vide pour conserver`
-                    : "Sk-… insère ta clé d'API"
-                }
-                className="bg-surface-hover text-foreground placeholder:text-muted-foreground focus-visible:ring-ring/60 h-10 min-w-0 flex-1 rounded-lg px-3 text-sm outline-none focus-visible:ring-3"
-                autoComplete="off"
-              />
+              <div className="relative min-w-0 flex-1">
+                <input
+                  type={showKey ? "text" : "password"}
+                  value={apiKey}
+                  onChange={(event) => {
+                    setApiKey(event.target.value);
+                    if (event.target.value) setClearedKey(false);
+                  }}
+                  placeholder="Insère ta clé API"
+                  className="bg-surface-hover text-foreground placeholder:text-muted-foreground focus-visible:ring-ring/60 h-10 w-full rounded-lg pl-3 pr-10 text-sm outline-none focus-visible:ring-3"
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey((visible) => !visible)}
+                  aria-label={showKey ? "Masquer la clé" : "Afficher la clé"}
+                  aria-pressed={showKey}
+                  className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 grid size-6 -translate-y-1/2 place-items-center rounded-md"
+                >
+                  {showKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
               {/* « Retirer » n'apparaît que pendant l'édition (champ non vide) :
-                  champ vide, le placeholder porte déjà l'info « Enregistrée »,
-                  le bouton serait du bruit. Taper une clé l'expose ; le cliquer
-                  arme l'effacement de la clé stockée au prochain « Enregistrer ». */}
+                  taper une clé l'expose ; cliquer arme l'effacement de la clé
+                  stockée au prochain « Enregistrer ». Un champ vide conserve la
+                  clé déjà enregistrée. */}
               {!clearedKey && apiKey.trim() !== "" && (
                 <Button
                   type="button"
