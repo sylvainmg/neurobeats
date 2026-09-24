@@ -1,0 +1,63 @@
+/**
+ * Racine de l'application : base locale, suivi des transferts, thème.
+ *
+ * Le suivi des transferts reprend au démarrage : un titre téléchargé pendant que
+ * l'application était fermée doit apparaître dans la bibliothèque au retour,
+ * sans que l'utilisateur ait à faire quoi que ce soit.
+ */
+import { Stack } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import { useEffect } from "react";
+import { StyleSheet } from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+
+import { preparerLecteur } from "@/playback/lecteur";
+import { gestionnaire, useApp } from "@/state/app";
+import { colors } from "@/theme/tokens";
+
+export default function Racine() {
+  const initialiser = useApp((etat) => etat.initialiser);
+
+  useEffect(() => {
+    void initialiser();
+    void preparerLecteur();
+    return gestionnaire.demarrerLeSuivi();
+  }, [initialiser]);
+
+  return (
+    <SafeAreaProvider>
+      <StatusBar style="light" />
+      {/*
+        Une seule fois, ici : les écrans à onglets ne géraient pas la marge
+        haute, leur en-tête passait donc sous la barre d'état. Le bas reste aux
+        écrans, qui connaissent leur propre contenu (barre de navigation,
+        lecteur plein écran).
+      */}
+      <SafeAreaView style={styles.racine} edges={["top", "left", "right"]}>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: colors.canvas },
+            animation: "slide_from_right",
+          }}
+        >
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="playlist/[id]" options={{ animation: "slide_from_right" }} />
+          <Stack.Screen name="scan" options={{ animation: "fade" }} />
+          <Stack.Screen
+            name="import"
+            options={{ presentation: "transparentModal", animation: "slide_from_bottom" }}
+          />
+          <Stack.Screen name="player" options={{ animation: "slide_from_bottom" }} />
+        </Stack>
+      </SafeAreaView>
+    </SafeAreaProvider>
+  );
+}
+
+const styles = StyleSheet.create({
+  racine: {
+    flex: 1,
+    backgroundColor: colors.canvas,
+  },
+});

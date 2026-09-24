@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NeuroBeats Mobile — les écrans du client Android</title>
+<style>
+  /* Jetons repris de l'app (web/app/globals.css) : une seule source d'identité
+     pour le bureau et le téléphone. */
+  :root {
+    --canvas: #0f1419;
+    --surface: #1a1f2a;
+    --surface-2: #222836;
+    --line: rgba(255, 255, 255, 0.08);
+    --line-strong: rgba(255, 255, 255, 0.14);
+    --ink: #f5f7fa;
+    --ink-2: #98a2b8;
+    --ink-3: #6b7688;
+    --primary: #0066ff;
+    --accent: #00d9ff;
+    --done: #2ed9a8;
+    --warn: #ffb020;
+    --fail: #ff6b6b;
+    --r-sm: 8px; --r-md: 14px; --r-lg: 20px; --r-pill: 999px;
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 24px 64px;
+    background: radial-gradient(120% 80% at 12% -10%, #16203a 0%, var(--canvas) 55%) fixed;
+    color: var(--ink);
+    font: 400 15px/1.5 "Inter", "Roboto", ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1520px; margin: 0 auto; }
+  .page > header { margin-bottom: 36px; max-width: 780px; }
+  .page h1 { margin: 0 0 8px; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; }
+  .page p { margin: 0; color: var(--ink-2); font-size: 14px; }
+  .page code { font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 12.5px; color: var(--accent); }
+
+  .frames { display: flex; flex-wrap: wrap; gap: 36px; }
+  .frame { width: 390px; }
+  .frame > figcaption { margin-top: 14px; }
+  .frame h2 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+  .frame p { margin: 4px 0 0; color: var(--ink-3); font-size: 12.5px; }
+
+  /* --- Le téléphone ------------------------------------------------------- */
+  .phone {
+    position: relative; height: 812px; border-radius: 34px; overflow: hidden;
+    background: var(--canvas);
+    border: 1px solid var(--line-strong);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.06) inset;
+    display: flex; flex-direction: column;
+  }
+  .statusbar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 20px 6px; font-size: 11px; color: var(--ink-2); flex: none;
+  }
+  .statusbar .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); display: inline-block; margin-right: 5px; }
+  .screen { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .body { flex: 1; min-height: 0; overflow: hidden; padding: 0 18px; }
+
+  .top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 12px 0 14px; }
+  .top h3 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
+  .top .meta { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+  /* Bande « ce que tu possèdes » : la promesse hors ligne, chiffrée. */
+  .vault {
+    display: flex; align-items: center; gap: 12px;
+    background: linear-gradient(135deg, rgba(0, 102, 255, 0.18), rgba(0, 217, 255, 0.07));
+    border: 1px solid rgba(0, 217, 255, 0.22); border-radius: var(--r-md);
+    padding: 11px 13px; margin-bottom: 16px;
+  }
+  .vault b { font-size: 15px; font-variant-numeric: tabular-nums; }
+  .vault span { color: var(--ink-2); font-size: 12px; display: block; }
+  .vault .gauge { margin-left: auto; width: 54px; height: 6px; border-radius: var(--r-pill); background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+  .vault .gauge i { display: block; height: 100%; width: 58%; background: var(--accent); border-radius: inherit; }
+
+  .search {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 18px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-pill);
+    padding: 11px 15px; color: var(--ink-3); font-size: 14px;
+  }
+
+  .label { display: flex; align-items: baseline; justify-content: space-between; margin: 16px 0 8px; }
+  .label h4 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-2); }
+  .label a { color: var(--ink-3); font-size: 12px; }
+
+  /* Lignes de titre : le fichier est l'objet de l'interface, on le montre. */
+  .row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .art {
+    width: 46px; height: 46px; border-radius: var(--r-sm); flex: none;
+    background: linear-gradient(140deg, #24304a, #17202f);
+    display: grid; place-items: center; font-size: 15px; font-weight: 700; color: var(--ink-2);
+    position: relative; overflow: hidden;
+  }
+  .art::after { content: ""; position: absolute; inset: 0; background: linear-gradient(140deg, rgba(0, 217, 255, 0.16), transparent 60%); }
+  .row .txt, .mini .txt { min-width: 0; flex: 1; }
+  .row .t { display: block; font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .s { display: block; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: var(--r-pill); }
+  .badge--done { color: var(--done); background: rgba(46, 217, 168, 0.12); }
+  .badge--part { color: var(--warn); background: rgba(255, 176, 32, 0.13); }
+  .badge--miss { color: var(--ink-3); background: rgba(255, 255, 255, 0.07); }
+  .badge--live { color: var(--accent); background: rgba(0, 217, 255, 0.12); }
+  .badge--fail { color: var(--fail); background: rgba(255, 107, 107, 0.13); }
+
+  /* Boutons : un seul primaire par écran. */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    border: 0; border-radius: var(--r-pill); font: inherit; font-weight: 600;
+    min-height: 48px; padding: 0 22px; cursor: pointer;
+  }
+  .btn--primary { background: var(--primary); color: #fff; box-shadow: 0 8px 24px rgba(0, 102, 255, 0.35); }
+  .btn--ghost { background: rgba(255, 255, 255, 0.06); color: var(--ink); border: 1px solid var(--line-strong); }
+  .btn--block { width: 100%; }
+  .btn:focus-visible, .row:focus-visible, .scan:focus-visible, .paste:focus-visible, .torch:focus-visible, .fab:focus-visible {
+    outline: 2px dashed var(--accent); outline-offset: 3px;
+  }
+  .btn:active { transform: translateY(1px); }
+
+  /* Action principale de l'app : le scan, toujours à portée de pouce. */
+  .fab {
+    position: absolute; right: 18px; bottom: 104px; z-index: 3;
+    display: inline-flex; align-items: center; gap: 9px; min-height: 52px; padding: 0 19px;
+    border-radius: var(--r-pill); border: 0; cursor: pointer;
+    background: var(--primary); color: #fff; font: inherit; font-weight: 700;
+    box-shadow: 0 14px 34px rgba(0, 102, 255, 0.45);
+  }
+  .fab svg { width: 20px; height: 20px; }
+
+  /* Barre de navigation. Capsule flottante, donc détachée du contenu et laissée
+     au-dessus de la zone de geste : rien de tactile sous la barre système.
+     Trois destinations, jamais plus ; cibles de 56 dp ; une seule famille
+     d'icônes (contour, 24 px, trait 1,8) car le mélange rempli/contour brouille
+     la hiérarchie ; l'état actif est porté par trois signaux — pastille couleur
+     graisse — et doublé d'aria-current, jamais par la couleur seule. Le texte
+     inactif reste à --ink-2 (5,9:1 sur la capsule) : --ink-3 tombait à 2,6:1,
+     sous le seuil de 4,5:1 exigé pour du texte. */
+  .nav {
+    position: relative; flex: none; margin: 0 12px 20px; padding: 6px 4px;
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    border-radius: 24px;
+    background: linear-gradient(180deg, rgba(36, 43, 58, 0.94), rgba(21, 26, 37, 0.97));
+    border: 1px solid var(--line-strong);
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.07) inset;
+  }
+  .nav__item {
+    display: grid; justify-items: center; gap: 3px; min-height: 56px;
+    padding: 7px 2px 5px; background: none; border: 0; font: inherit;
+    color: var(--ink-2); cursor: pointer;
+    transition: color 120ms var(--ease);
+  }
+  .nav__pill {
+    position: relative; display: grid; place-items: center;
+    width: 56px; height: 32px; border-radius: var(--r-pill);
+    transition: background 120ms var(--ease), box-shadow 120ms var(--ease);
+  }
+  .nav__item svg { width: 24px; height: 24px; }
+  .nav__label { font-size: 11px; font-weight: 500; }
+  .nav__item.is-on { color: var(--ink); }
+  .nav__item.is-on .nav__pill {
+    background: rgba(0, 217, 255, 0.15);
+    box-shadow: inset 0 0 0 1px rgba(0, 217, 255, 0.28);
+  }
+  .nav__item.is-on svg { color: var(--accent); }
+  .nav__item.is-on .nav__label { font-weight: 600; }
+  /* Retour au toucher : une couche de fond, aucun déplacement de mise en page. */
+  .nav__item:active .nav__pill { background: rgba(255, 255, 255, 0.10); }
+  .nav__item:focus-visible { outline: 2px dashed var(--accent); outline-offset: -3px; border-radius: var(--r-md); }
+  /* Transfert en cours : le compte vit sur l'onglet, détaché par un anneau, et
+     se retrouve dans le nom accessible — la pastille seule serait muette. */
+  .nav__badge {
+    position: absolute; top: -5px; right: 0; min-width: 17px; height: 17px;
+    display: grid; place-items: center; padding: 0 5px;
+    border-radius: var(--r-pill); background: var(--primary); color: #fff;
+    font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+    box-shadow: 0 0 0 2px rgba(21, 26, 37, 0.95);
+  }
+
+  /* Mini-lecteur : le son ne s'arrête pas en changeant d'écran. */
+  .mini {
+    flex: none; margin: 0 12px; padding: 9px 12px; border-radius: var(--r-md);
+    background: var(--surface-2); border: 1px solid var(--line-strong);
+    display: flex; align-items: center; gap: 11px;
+  }
+  .mini .t { display: block; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mini .s { display: block; color: var(--ink-3); font-size: 11px; }
+  .mini .bar { height: 3px; border-radius: var(--r-pill); background: rgba(255, 255, 255, 0.14); margin-top: 7px; overflow: hidden; }
+  .mini .bar i { display: block; height: 100%; width: 42%; background: var(--accent); }
+  .play { width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--primary); color: #fff; display: grid; place-items: center; flex: none; cursor: pointer; }
+  .play svg { width: 17px; height: 17px; }
+
+  /* Égaliseur : le seul ornement, et il informe (ça joue). */
+  .eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 13px; }
+  .eq i { width: 3px; height: 100%; background: #fff; border-radius: 2px; transform-origin: bottom; animation: beat 1000ms var(--ease) infinite; }
+  .eq i:nth-child(2) { animation-delay: 170ms; animation-duration: 1180ms; }
+  .eq i:nth-child(3) { animation-delay: 80ms; animation-duration: 860ms; }
+  .eq i:nth-child(4) { animation-delay: 260ms; animation-duration: 1080ms; }
+  @keyframes beat { 0%, 100% { transform: scaleY(0.34); } 50% { transform: scaleY(1); } }
+
+  /* --- Arrivées et travail en cours -------------------------------------- */
+  .rise { animation: rise 320ms var(--ease) both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: none; } }
+  .stagger > * { animation: rise 320ms var(--ease) both; }
+  .stagger > *:nth-child(1) { animation-delay: 20ms; }
+  .stagger > *:nth-child(2) { animation-delay: 45ms; }
+  .stagger > *:nth-child(3) { animation-delay: 70ms; }
+  .stagger > *:nth-child(4) { animation-delay: 95ms; }
+  .stagger > *:nth-child(5) { animation-delay: 120ms; }
+  .stagger > *:nth-child(6) { animation-delay: 145ms; }
+  @keyframes sweep { from { background-position: -140% 0; } to { background-position: 240% 0; } }
+  .working i {
+    background-image: linear-gradient(90deg, var(--accent) 0%, #b8f4ff 45%, var(--accent) 60%);
+    background-size: 220% 100%; animation: sweep 1500ms linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rise, .stagger > *, .eq i, .working i { animation: none !important; }
+    .eq i { transform: scaleY(0.7); }
+  }
+
+  /* --- Écran vide : il enseigne, il ne s'excuse pas --------------------- */
+  .blank { display: grid; align-content: center; gap: 18px; text-align: center; padding: 24px 6px; height: 100%; }
+  .blank .mark { width: 62px; height: 62px; border-radius: var(--r-lg); margin: 0 auto; display: grid; place-items: center; background: linear-gradient(140deg, var(--primary), var(--accent)); color: #04121f; }
+  .blank .mark svg { width: 30px; height: 30px; }
+  .blank h3 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -0.015em; }
+  .blank p { margin: 0 auto; max-width: 300px; color: var(--ink-2); font-size: 13.5px; }
+  .steps { counter-reset: s; display: grid; gap: 9px; text-align: left; max-width: 320px; margin: 2px auto 0; padding: 0; }
+  .steps li { list-style: none; display: flex; gap: 10px; align-items: baseline; color: var(--ink-2); font-size: 13px; }
+  .steps li::before { counter-increment: s; content: counter(s); flex: none; width: 20px; height: 20px; border-radius: 50%; background: rgba(255, 255, 255, 0.08); color: var(--ink); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+
+  /* --- Scanner ---------------------------------------------------------- */
+  /* La zone de visée prend la place restante : le bandeau d'erreur peut
+     grandir (cause + gestes à faire) sans pousser le bouton hors de l'écran. */
+  .body--scan { display: flex; flex-direction: column; }
+  .scan { position: relative; flex: 1; min-height: 0; border-radius: var(--r-lg); overflow: hidden; background: #05080c; border: 1px solid var(--line-strong); }
+  .scan .lens { position: absolute; inset: 0; background:
+      radial-gradient(60% 45% at 50% 42%, rgba(0, 217, 255, 0.14), transparent 70%),
+      repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 26px); }
+  .guide { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); width: 208px; height: 208px; }
+  .guide span { position: absolute; width: 34px; height: 34px; border: 3px solid var(--accent); border-radius: 6px; }
+  .guide span:nth-child(1) { top: 0; left: 0; border-right: 0; border-bottom: 0; }
+  .guide span:nth-child(2) { top: 0; right: 0; border-left: 0; border-bottom: 0; }
+  .guide span:nth-child(3) { bottom: 0; left: 0; border-right: 0; border-top: 0; }
+  .guide span:nth-child(4) { bottom: 0; right: 0; border-left: 0; border-top: 0; }
+  .scan-copy { position: absolute; left: 0; right: 0; bottom: 96px; text-align: center; padding: 0 26px; }
+  .scan-copy h3 { margin: 0 0 6px; font-size: 17px; font-weight: 700; }
+  .scan-copy p { margin: 0; color: var(--ink-2); font-size: 13px; }
+  .torch { position: absolute; right: 16px; top: 16px; width: 46px; height: 46px; border-radius: 50%; border: 1px solid var(--line-strong); background: rgba(10, 16, 24, 0.72); color: var(--ink); display: grid; place-items: center; cursor: pointer; }
+  .torch svg { width: 20px; height: 20px; }
+  .paste { position: absolute; left: 16px; right: 16px; bottom: 18px; }
+  .alert { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 14px; padding: 11px 13px; border-radius: var(--r-md); font-size: 12.5px; line-height: 1.45; }
+  .alert--info { background: rgba(0, 217, 255, 0.09); border: 1px solid rgba(0, 217, 255, 0.24); color: #cdefff; }
+
+  /* --- Feuille d'import : le moment de décision ------------------------- */
+  .sheet { border-radius: var(--r-lg) var(--r-lg) 0 0; background: var(--surface); border: 1px solid var(--line-strong); border-bottom: 0; padding: 16px 16px 20px; }
+  .sheet .grip { width: 40px; height: 4px; border-radius: var(--r-pill); background: var(--line-strong); margin: 0 auto 14px; }
+  .sheet h3 { margin: 0 0 4px; font-size: 19px; font-weight: 800; letter-spacing: -0.02em; }
+  .sheet .sub { margin: 0 0 16px; color: var(--ink-2); font-size: 13px; }
+  .kv { display: grid; grid-template-columns: 1fr auto; gap: 9px 12px; font-size: 13.5px; margin: 0 0 16px; }
+  .kv dt { color: var(--ink-2); }
+  .kv dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .seg { display: flex; gap: 6px; background: rgba(255, 255, 255, 0.05); padding: 4px; border-radius: var(--r-pill); margin-bottom: 8px; }
+  .seg span { flex: 1; text-align: center; padding: 8px 6px; border-radius: var(--r-pill); font-size: 12.5px; color: var(--ink-2); }
+  .seg .on { background: var(--primary); color: #fff; font-weight: 600; }
+  .hint { color: var(--ink-3); font-size: 12px; margin: 0 0 16px; }
+  .toggle { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .toggle .txt { flex: 1; }
+  .toggle b { display: block; font-size: 13.5px; font-weight: 600; }
+  .toggle em { display: block; color: var(--ink-3); font-size: 12px; font-style: normal; }
+  .switch { width: 44px; height: 26px; border-radius: var(--r-pill); background: var(--primary); position: relative; flex: none; }
+  .switch::after { content: ""; position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; }
+  .switch.off { background: rgba(255, 255, 255, 0.18); }
+  .switch.off::after { right: auto; left: 3px; }
+
+  /* --- Téléchargement --------------------------------------------------- */
+  .total { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: 13px 14px; margin-bottom: 18px; }
+  .total .n { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 9px; font-variant-numeric: tabular-nums; }
+  .total .n b { font-size: 17px; font-weight: 800; letter-spacing: -0.01em; }
+  .total .n span { color: var(--ink-3); font-size: 12px; }
+  .track { height: 6px; border-radius: var(--r-pill); background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+  .track i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+  .actions { display: flex; gap: 10px; margin-top: 12px; }
+
+  /* --- Lecture ---------------------------------------------------------- */
+  .player { display: flex; flex-direction: column; height: 100%; gap: 16px; }
+  .cover {
+    aspect-ratio: 1; width: 100%; max-width: 296px; margin: 0 auto;
+    border-radius: var(--r-lg); flex: none;
+    background: linear-gradient(150deg, #2a3550, #101722);
+    display: grid; place-items: center; border: 1px solid var(--line-strong);
+    box-shadow: 0 20px 44px rgba(0, 0, 0, 0.45);
+  }
+  .cover span { font-size: 44px; font-weight: 800; letter-spacing: -0.03em; color: rgba(255, 255, 255, 0.9); }
+  .now h3 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -0.015em; }
+  .now p { margin: 3px 0 0; color: var(--ink-2); font-size: 13px; }
+  .progress { display: flex; align-items: center; gap: 10px; color: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .progress .track { flex: 1; }
+  .transport { display: flex; align-items: center; justify-content: space-between; }
+  .transport button { width: 46px; height: 46px; border-radius: 50%; border: 0; background: transparent; color: var(--ink); display: grid; place-items: center; cursor: pointer; }
+  .transport .big { width: 64px; height: 64px; background: var(--primary); color: #fff; box-shadow: 0 12px 30px rgba(0, 102, 255, 0.4); }
+  .transport svg { width: 22px; }
+  .transport .big svg { width: 26px; }
+  .queue { border-top: 1px solid var(--line); padding-top: 12px; }
+  .queue h4 { margin: 0 0 8px; font-size: 12px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-2); }
+  .qrow { display: flex; gap: 10px; align-items: center; color: var(--ink-2); font-size: 13px; padding: 6px 0; }
+  .qrow i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: none; }
+  .qrow .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* --- Réglages --------------------------------------------------------- */
+  .group { border-top: 1px solid var(--line); padding: 13px 0; }
+  .group:first-of-type { border-top: 0; padding-top: 2px; }
+  .group h4 { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-2); }
+  .group .v { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .group .c { color: var(--ink-3); font-size: 12px; margin: 4px 0 0; line-height: 1.45; }
+  .danger { color: var(--fail); }
+
+  /* --- Volet de notifications ------------------------------------------- */
+  /* Surface SYSTEME : ce n'est pas notre interface. On ne choisit que ce que
+     l'app declare (pochette, titres, actions, accent) ; la forme, les coins, les
+     espacements et les cibles tactiles viennent d'Android. */
+  .shade {
+    position: absolute; inset: 0; padding: 8px 12px 0; display: flex; flex-direction: column; gap: 10px;
+    background: linear-gradient(160deg, #14203a 0%, #0b1119 45%, #1a1420 100%);
+  }
+  .shade-handle { width: 34px; height: 4px; border-radius: var(--r-pill); background: rgba(255, 255, 255, 0.28); margin: 4px auto 6px; }
+  .qs { display: flex; gap: 8px; }
+  .qs span {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+    height: 34px; border-radius: var(--r-pill); background: rgba(255, 255, 255, 0.1);
+    font-size: 11px; color: var(--ink-2);
+  }
+  .qs svg { width: 14px; height: 14px; }
+  .qs .on { background: rgba(0, 217, 255, 0.18); color: var(--accent); }
+  .shade-label { display: flex; align-items: center; justify-content: space-between; margin: 4px 2px 0; font-size: 11.5px; color: var(--ink-2); }
+  .shade-label b { font-weight: 600; }
+  .shade-label span { color: var(--accent); }
+
+  .notif {
+    border-radius: 22px; background: rgba(22, 28, 38, 0.92); border: 1px solid var(--line);
+    padding: 13px 14px; display: grid; gap: 10px;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
+  }
+  .notif-head { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--ink-2); }
+  .notif-head i { width: 14px; height: 14px; border-radius: 4px; background: linear-gradient(140deg, var(--primary), var(--accent)); flex: none; }
+  .notif-media { display: flex; align-items: center; gap: 12px; }
+  .notif-media .art { width: 54px; height: 54px; border-radius: 12px; font-size: 17px; }
+  .notif-meta { min-width: 0; }
+  .notif-meta b { display: block; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .notif-meta span { display: block; color: var(--ink-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* La barre de progression n'apparait q'un fois la notification elargie. */
+  .notif-seek { height: 3px; border-radius: var(--r-pill); background: rgba(255, 255, 255, 0.16); }
+  .notif-seek i { display: block; height: 100%; width: 42%; background: var(--accent); border-radius: inherit; }
+  /* Cinq commandes, toutes a 48dp mini : c'est la regle d'Android, pas la notre. */
+  .notif-actions { display: flex; align-items: center; justify-content: space-between; }
+  .notif-actions button {
+    width: 48px; height: 48px; border-radius: 50%; border: 0; background: transparent;
+    color: var(--ink); display: grid; place-items: center; cursor: pointer;
+  }
+  .notif-actions button svg { width: 20px; height: 20px; }
+  /* L'accent de l'app sur la commande principale : la seule teinte que le
+     systeme reprend de nous. */
+  .notif-actions .lead { background: var(--primary); color: #fff; box-shadow: 0 8px 20px rgba(0, 102, 255, 0.45); }
+  .notif-actions .text { width: auto; padding: 0 12px; border-radius: var(--r-pill); background: transparent; color: var(--accent); font: inherit; font-size: 13px; font-weight: 600; }
+  .notif .titre { font-size: 13.5px; font-weight: 600; }
+  .notif .detail { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+  /* Une notification d'une autre app : un volet n'est pas a nous tout seuls. */
+  .notif--autre .notif-head i { background: linear-gradient(140deg, #3ddc97, #1f9d6b); }
+  .notif--autre .corps { font-size: 13px; line-height: 1.45; color: var(--ink-2); }
+  .notif--autre .corps b { color: var(--ink); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>NeuroBeats Mobile — les écrans du client Android</h1>
+    <p>Registre produit : l'app est un instrument, pas une vitrine. Elle ne parle jamais au serveur du bureau — elle détient ses fichiers. L'objet de l'interface est donc <b>le titre et son fichier</b> (taille, état, provenance), et l'action principale est le <b>scan d'un code</b>, puisque c'est lui qui fait exister la bibliothèque. Palette reprise de l'app : canvas <code>#0f1419</code>, primaire <code>#0066ff</code>, accent <code>#00d9ff</code>, plus trois couleurs d'état (téléchargé <code>#2ed9a8</code>, partiel <code>#ffb020</code>, échec <code>#ff6b6b</code>) — toujours doublées d'une icône et d'un texte, jamais seules.</p>
+  </header>
+
+  <div class="frames">
+
+    <!-- 1. Premier lancement : l'écran vide enseigne le produit ------------ -->
+    <figure class="frame">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span class="dot"></span><span>4G · 82 %</span></div>
+        <div class="screen"><div class="body">
+          <div class="top"><h3>Bibliothèque</h3><span class="meta">0 titre</span></div>
+          <div class="blank">
+            <div class="mark" aria-hidden="true">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3M20 20h1"/></svg>
+            </div>
+            <h3>Ta musique, sur ton téléphone</h3>
+            <p>Ici, rien ne se diffuse en continu. Les titres sont téléchargés une fois, puis disponibles sans réseau.</p>
+            <ol class="steps">
+              <li>Ouvre NeuroBeats sur ton ordinateur</li>
+              <li>Choisis une playlist, affiche son code</li>
+              <li>Scanne-le : les titres arrivent ici</li>
+            </ol>
+          </div>
+        </div>
+        <button class="fab rise" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3M20 20h1"/></svg>
+          Scanner un code
+        </button>
+        <nav class="nav" aria-label="Navigation principale">
+          <button type="button" class="nav__item is-on" aria-current="page">
+            <span class="nav__pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg></span>
+            <span class="nav__label">Bibliothèque</span>
+          </button>
+          <button type="button" class="nav__item">
+            <span class="nav__pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14"/></svg></span>
+            <span class="nav__label">Téléchargements</span>
+          </button>
+          <button type="button" class="nav__item">
+            <span class="nav__pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h2.6M11.4 8H20M4 16h8.6M17.4 16H20"/><circle cx="9" cy="8" r="2.4"/><circle cx="15" cy="16" r="2.4"/></svg></span>
+            <span class="nav__label">Réglages</span>
+          </button>
+        </nav>
+        </div>
+      </div>
+      <figcaption>
+        <h2>1 · Premier lancement</h2>
+        <p>L'écran vide enseigne le parcours en trois lignes, il n'explique pas l'app : il montre ce qui la remplit. Le scan n'est pas rangé dans un menu, il est l'action flottante, à portée de pouce.</p>
+      </figcaption>
+    </figure>
+
+    <!-- 2. Bibliothèque remplie : le fichier comme objet ------------------- -->
+    <figure class="frame">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span class="dot"></span><span>4G · 82 %</span></div>
+        <div class="screen"><div class="body">
+          <div class="top"><h3>Bibliothèque</h3><span class="meta">24 titres</span></div>
+          <div class="vault">
+            <div>
+              <b>310 Mo</b>
+              <span>hors ligne · 8,4 Go libres</span>
+            </div>
+            <span class="gauge" aria-hidden="true"><i></i></span>
+          </div>
+          <div class="search"><svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>Rechercher un titre, un artiste</div>
+
+          <div class="label"><h4>Du 14 sept.</h4><a href="#">3 en attente</a></div>
+          <div class="stagger">
+            <div class="row" tabindex="0"><span class="art">D</span><span class="txt"><span class="t">Lomepal - Decrescendo (Clip Officiel)</span><span class="s">3:52 · 9,1 Mo</span></span><span class="badge badge--done">✓ Chez toi</span></div>
+            <div class="row" tabindex="0"><span class="art">N</span><span class="txt"><span class="t">Dua Lipa - New Rules  music video</span><span class="s">2:30 · 8,4 Mo</span></span><span class="badge badge--done">✓ Chez toi</span></div>
+            <div class="row" tabindex="0"><span class="art">I</span><span class="txt"><span class="t">Lil Nas X - INDUSTRY BABY (Super Clean Version - Video)</span><span class="s">6,2 Mo sur 9,8 Mo</span></span><span class="badge badge--part">◐ 63 %</span></div>
+            <div class="row" tabindex="0"><span class="art">5</span><span class="txt"><span class="t">50 Cent, 2Pac - In Da Club (Remix) ft. Kendrick Lamar, Snoop Dogg</span><span class="s">fichier absent</span></span><span class="badge badge--miss">↓ À récupérer</span></div>
+          </div>
+
+          <div class="label"><h4>Playlists</h4><a href="#">Tout</a></div>
+          <div class="stagger">
+            <div class="row" tabindex="0"><span class="art">R</span><span class="txt"><span class="t">Rap FR — entraînement</span><span class="s">18 titres · 142 Mo · complète</span></span><span class="badge badge--done">✓</span></div>
+          </div>
+        </div>
+        <div class="mini">
+          <span class="art">D</span>
+          <span class="txt">
+            <span class="t">Dua Lipa - New Rules  music video</span>
+            <span class="s">Kylie AALIYAH</span>
+            <span class="bar"><i></i></span>
+          </span>
+          <button class="play" type="button" aria-label="Mettre en pause"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></button>
+        </div>
+        <button class="fab" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3M20 20h1"/></svg>
+          Scanner
+        </button>
+        <nav class="nav" aria-label="Navigation principale">
+          <button type="button" class="nav__item is-on" aria-current="page">
+            <span class="nav__pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg></span>
+            <span class="nav__label">Bibliothèque</span>
+          </button>
+          <button type="button" class="nav__item" aria-label="Téléchargements, 8 transferts en cours">
+            <span class="nav__pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14"/></svg><span class="nav__badge">8</span></span>
+            <span class="nav__label">Téléchargements</span>
+          </button>
+          <button type="button" class="nav__item">
+            <span class="nav__pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h2.6M11.4 8H20M4 16h8.6M17.4 16H20"/><circle cx="9" cy="8" r="2.4"/><circle cx="15" cy="16" r="2.4"/></svg></span>
+            <span class="nav__label">Réglages</span>
+          </button>
+        </nav>
+        </div>
+      </div>
+      <figcaption>
+        <h2>2 · Bibliothèque</h2>
+        <p>La bande du haut chiffre la promesse : combien de musique, combien de place. Chaque ligne dit son fichier — taille, état — et pour celle qui est coupée, ce qu'il reste à faire. Les titres trop longs sont tronqués, testés ici avec de vrais libellés.</p>
+      </figcaption>
+    </figure>
+
+    <!-- 3. Scanner : le geste signature ----------------------------------- -->
+    <figure class="frame">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span class="dot"></span><span>Wi-Fi · 82 %</span></div>
+        <div class="screen"><div class="body body--scan">
+          <div class="alert alert--bad" role="alert">
+            <span><b>Ton ordinateur n'est pas joignable sur ce réseau.</b> Vérifie que NeuroBeats y est ouvert et que le téléphone est sur le même Wi-Fi, puis ressaisis le code.</span>
+          </div>
+          <div class="scan">
+            <div class="lens" aria-hidden="true"></div>
+            <div class="guide" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+            <button class="torch" type="button" aria-label="Allumer la lampe">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3h6v4l-1.5 3v11h-3V10L9 7z"/><path d="M12 2v1"/></svg>
+            </button>
+            <div class="scan-copy">
+              <h3>Vise le code de la playlist</h3>
+              <p>Il apparaît dans « Transférer vers le téléphone », et ne vaut que 5 minutes.</p>
+            </div>
+            <div class="paste">
+              <button class="btn btn--ghost btn--block" type="button">
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M6 5H5v16h14V5h-1"/></svg>
+                Ressaisir un code
+              </button>
+            </div>
+          </div>
+        </div>
+        </div>
+      </div>
+      <figcaption>
+        <h2>3 · Scanner · ordinateur injoignable</h2>
+        <p>En réseau local, cette panne existe vraiment : le code est bon, mais la machine qui détient la musique ne répond pas. L'alerte dit la cause et les deux gestes utiles, et « Ressaisir un code » remplace « Coller un code » — utile autant après un refus de caméra qu'après un changement de réseau.</p>
+      </figcaption>
+    </figure>
+
+    <!-- 4. Aperçu de l'import : le moment de décision ---------------------- -->
+    <figure class="frame">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span class="dot"></span><span>Wi-Fi · 82 %</span></div>
+        <div class="screen">
+          <div class="body" style="opacity: 0.4">
+            <div class="top"><h3>Bibliothèque</h3><span class="meta">24 titres</span></div>
+            <div class="vault"><div><b>310 Mo</b><span>hors ligne</span></div><span class="gauge"><i></i></span></div>
+            <div class="search">Rechercher un titre, un artiste</div>
+          </div>
+          <div class="sheet rise">
+            <div class="grip" aria-hidden="true"></div>
+            <h3>Rap FR — entraînement</h3>
+            <p class="sub">Code lu depuis <b>l'ordinateur de Sylvain</b> · Wi-Fi</p>
+            <dl class="kv">
+              <dt>Nouveaux titres à récupérer</dt><dd>21</dd>
+              <dt>Déjà chez toi</dt><dd>3</dd>
+              <dt>À préparer par ton ordinateur</dt><dd>12</dd>
+              <dt>Poids estimé</dt><dd>167 Mo</dd>
+              <dt>Durée totale</dt><dd>1 h 14</dd>
+            </dl>
+            <div class="seg" role="group" aria-label="Qualité de téléchargement">
+              <span>Économique</span><span class="on">Standard</span><span>Maximum</span>
+            </div>
+            <p class="hint">Standard : ≈ 8 Mo par titre. Ce réglage vaut pour ce transfert seulement.</p>
+            <div class="toggle">
+              <span class="txt"><b>Wi-Fi uniquement</b><em>Le transfert attend un réseau fiable</em></span>
+              <span class="switch" role="switch" aria-checked="true" aria-label="Wi-Fi uniquement"></span>
+            </div>
+            <button class="btn btn--primary btn--block" type="button" style="margin-top: 10px">
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14"/></svg>
+              Télécharger 21 titres
+            </button>
+          </div>
+        </div>
+      </div>
+      <figcaption>
+        <h2>4 · Aperçu de l'import</h2>
+        <p>Le seul vrai moment de décision, donc un seul bouton plein. Tout ce qui coûte est annoncé avant d'agir : le poids, la durée, la qualité, et surtout les <b>3 titres déjà présents</b> — rescanner n'ajoute que la différence. Le bouton se nomme par son action et par son nombre, pas « Valider ».</p>
+      </figcaption>
+    </figure>
+
+    <!-- 5. Téléchargement : une tâche longue, donc un écran ---------------- -->
+    <figure class="frame">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span class="dot"></span><span>Wi-Fi · 79 %</span></div>
+        <div class="screen"><div class="body">
+          <div class="top"><h3>Téléchargements</h3><span class="meta">21 titres</span></div>
+          <div class="total">
+            <div class="n"><b>42 %</b><span>8 sur 21 · 71 Mo sur 167 Mo</span></div>
+            <div class="track working" role="progressbar" aria-valuenow="42" aria-valuemin="0" aria-valuemax="100" aria-label="Téléchargement de la playlist Rap FR entraînement"><i style="width: 42%"></i></div>
+            <div class="actions">
+              <button class="btn btn--ghost" type="button" style="min-height: 40px; padding: 0 16px">
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+                Suspendre
+              </button>
+              <button class="btn btn--ghost" type="button" style="min-height: 40px; padding: 0 16px">Tout annuler</button>
+            </div>
+          </div>
+          <div class="stagger">
+            <div class="row"><span class="art">L</span><span class="txt"><span class="t">Lomepal - Decrescendo (Clip Officiel)</span><span class="s">terminé · 9,1 Mo</span></span><span class="badge badge--done">✓</span></div>
+            <div class="row"><span class="art">N</span><span class="txt"><span class="t">Ninho - Jefe</span><span class="s">en cours · 4,8 Mo sur 8,2 Mo</span></span><span class="badge badge--live">◐ 58 %</span></div>
+            <div class="row"><span class="art">S</span><span class="txt"><span class="t">SCH - Otto</span><span class="s">ton ordinateur prépare ce titre · 8,0 Mo</span></span><span class="badge badge--part">⚙ en préparation</span></div>
+            <div class="row"><span class="art">N</span><span class="txt"><span class="t">Nekfeu - Égérie</span><span class="s">en attente · 7,6 Mo</span></span><span class="badge badge--miss">· en file</span></div>
+            <div class="row"><span class="art">R</span><span class="txt"><span class="t">Ronisia - Madame</span><span class="s">échec · réseau coupé · fichier partiel supprimé</span></span>
+              <button class="btn btn--ghost" type="button" style="min-height: 36px; padding: 0 14px; font-size: 12.5px">Réessayer</button>
+            </div>
+          </div>
+          <div class="alert alert--info" role="status" style="margin-top: 16px">
+            <span>Le transfert continue si tu quittes l'app : une notification le suit, avec pause et reprise.</span>
+          </div>
+        </div>
+        <nav class="nav" aria-label="Navigation principale">
+          <button type="button" class="nav__item">
+            <span class="nav__pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg></span>
+            <span class="nav__label">Bibliothèque</span>
+          </button>
+          <button type="button" class="nav__item is-on" aria-current="page" aria-label="Téléchargements, 8 transferts en cours">
+            <span class="nav__pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14"/></svg><span class="nav__badge">8</span></span>
+            <span class="nav__label">Téléchargements</span>
+          </button>
+          <button type="button" class="nav__item">
+            <span class="nav__pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h2.6M11.4 8H20M4 16h8.6M17.4 16H20"/><circle cx="9" cy="8" r="2.4"/><circle cx="15" cy="16" r="2.4"/></svg></span>
+            <span class="nav__label">Réglages</span>
+          </button>
+        </nav>
+        </div>
+      </div>
+      <figcaption>
+        <h2>5 · Téléchargements</h2>
+        <p>Une tâche longue mérite un écran, pas un toast : avancement global chiffré, ligne par ligne, un échec qui porte sa cause et son bouton, et un fichier partiel annoncé comme supprimé (jamais de faux « bientôt fini »). Le balayage marque le travail en cours, doublé du texte.</p>
+      </figcaption>
+    </figure>
+
+    <!-- 6. Lecture -------------------------------------------------------- -->
+    <figure class="frame">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span class="dot"></span><span>Avion · 82 %</span></div>
+        <div class="screen"><div class="body">
+          <div class="player">
+            <div class="cover rise"><span>N</span></div>
+            <div class="now">
+              <h3>Dua Lipa - New Rules  music video</h3>
+              <p>Kylie AALIYAH · <span style="color: var(--done)">✓ hors ligne</span></p>
+            </div>
+            <div class="progress"><span>1:03</span><div class="track"><i style="width: 42%"></i></div><span>2:30</span></div>
+            <div class="transport">
+              <button type="button" aria-label="Titre précédent"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zm3 7 9-6v12z"/></svg></button>
+              <button type="button" aria-label="Reculer de 15 secondes"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 5 6 9l5 4V5z"/><path d="M6 9h7a6 6 0 0 1 0 12"/></svg></button>
+              <button class="big" type="button" aria-label="Lecture en cours, mettre en pause">
+                <span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+              </button>
+              <button type="button" aria-label="Avancer de 15 secondes"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m13 5 5 4-5 4V5z"/><path d="M18 9h-7a6 6 0 0 0 0 12"/></svg></button>
+              <button type="button" aria-label="Titre suivant"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM6 6l9 6-9 6z"/></svg></button>
+            </div>
+            <div class="queue">
+              <h4>Ensuite</h4>
+              <div class="qrow"><i></i><span class="t">Lomepal - Decrescendo (Clip Officiel)</span></div>
+              <div class="qrow"><i></i><span class="t">Lil Nas X - MONTERO (Call Me By Your Name)</span></div>
+              <div class="qrow"><i></i><span class="t">50 Cent, 2Pac - In Da Club (Remix)</span></div>
+            </div>
+          </div>
+        </div>
+        </div>
+      </div>
+      <figcaption>
+        <h2>6 · Lecture</h2>
+        <p>En mode avion, et c'est le sujet : la pochette le rappelle. L'égaliseur remplace l'icône de lecture pendant que ça joue — il informe, il n'orne pas. Les cinq commandes tiennent dans la zone du pouce, et la file reste lisible sous la main.</p>
+      </figcaption>
+    </figure>
+
+    <!-- 7. Réglages : chaque choix montre sa conséquence -------------------- -->
+    <figure class="frame">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span class="dot"></span><span>Wi-Fi · 82 %</span></div>
+        <div class="screen"><div class="body">
+          <div class="top"><h3>Réglages</h3><span class="meta">v0.1</span></div>
+
+          <div class="group">
+            <h4>Espace occupé</h4>
+            <p class="v">310 Mo · 24 titres</p>
+            <div class="track" style="margin: 8px 0 4px"><i style="width: 58%"></i></div>
+            <p class="c">8,4 Go libres sur 8,7 Go. Les fichiers vivent dans le dossier Musique du téléphone, rien ailleurs.</p>
+          </div>
+
+          <div class="group">
+            <h4>Qualité des prochains téléchargements</h4>
+            <div class="seg" role="group" aria-label="Qualité par défaut">
+              <span>Économique</span><span class="on">Standard</span><span>Maximum</span>
+            </div>
+            <p class="c">Standard : ≈ 8 Mo par titre. Maximum double le poids, pour un gain audible au casque. Vaut pour les prochains transferts.</p>
+          </div>
+
+          <div class="group">
+            <div class="toggle" style="border-top: 0; padding-top: 0">
+              <span class="txt"><b>Télécharger en Wi-Fi uniquement</b><em>Évite de consommer ton forfait</em></span>
+              <span class="switch" role="switch" aria-checked="true" aria-label="Télécharger en Wi-Fi uniquement"></span>
+            </div>
+            <div class="toggle">
+              <span class="txt"><b>Réduire les animations</b><em>Éteint : suit le réglage du système</em></span>
+              <span class="switch off" role="switch" aria-checked="false" aria-label="Réduire les animations"></span>
+            </div>
+          </div>
+
+          <div class="group">
+            <h4>Origine de la musique</h4>
+            <p class="c">Titres transférés depuis <b>l'ordinateur de Sylvain</b>. L'app ne se connecte à aucun service.</p>
+          </div>
+
+          <div class="group">
+            <button class="btn btn--ghost btn--block danger" type="button" style="margin-bottom: 10px">Retirer les 4 titres sans fichier</button>
+            <button class="btn btn--ghost btn--block danger" type="button">Tout effacer</button>
+            <p class="c">Irréversible : les fichiers partent aussi. Confirmation demandée, poids libéré annoncé.</p>
+          </div>
+        </div>
+        <nav class="nav" aria-label="Navigation principale">
+          <button type="button" class="nav__item">
+            <span class="nav__pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg></span>
+            <span class="nav__label">Bibliothèque</span>
+          </button>
+          <button type="button" class="nav__item" aria-label="Téléchargements, 8 transferts en cours">
+            <span class="nav__pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14"/></svg><span class="nav__badge">8</span></span>
+            <span class="nav__label">Téléchargements</span>
+          </button>
+          <button type="button" class="nav__item is-on" aria-current="page">
+            <span class="nav__pill"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h2.6M11.4 8H20M4 16h8.6M17.4 16H20"/><circle cx="9" cy="8" r="2.4"/><circle cx="15" cy="16" r="2.4"/></svg></span>
+            <span class="nav__label">Réglages</span>
+          </button>
+        </nav>
+        </div>
+      </div>
+      <figcaption>
+        <h2>7 · Réglages</h2>
+        <p>Registre « configurer » : chaque choix dit ce qu'il change (« ≈ 8 Mo par titre », « s'applique aux prochains transferts »). Les actions destructrices sont nommées précisément, jamais un « supprimer » générique. Le réglage d'animations suit le système et le propose explicitement.</p>
+      </figcaption>
+    </figure>
+
+    <!-- 8. Volet de notifications pendant l'ecoute ------------------------- -->
+    <figure class="frame">
+      <div class="phone">
+        <div class="shade">
+          <div class="statusbar" style="padding: 8px 8px 0">
+            <span>9:41</span>
+            <span class="dot"></span>
+            <span>Wi-Fi · 82 %</span>
+          </div>
+          <span class="shade-handle" aria-hidden="true"></span>
+
+          <div class="qs">
+            <span class="on"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M2 8.5a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16.5a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>Wi-Fi</span>
+            <span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="m7 7 10 10-3 3-7-7zM17 7 7 17l3 3 7-7z"/></svg>Bluetooth</span>
+            <span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>Silence</span>
+            <span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M9 3h6v4l-1.5 3v11h-3V10L9 7z"/></svg>Lampe</span>
+          </div>
+
+          <p class="shade-label"><b>Notifications</b><span>Tout effacer</span></p>
+
+          <!-- Lecture en cours : Android reprend notre pochette, nos titres,
+               nos actions et notre accent. Le reste est systeme. -->
+          <div class="notif">
+            <div class="notif-head"><i aria-hidden="true"></i>NeuroBeats<span>· maintenant</span></div>
+            <div class="notif-media">
+              <span class="art">N</span>
+              <span class="notif-meta">
+                <b>Dua Lipa - New Rules  music video</b>
+                <span>Kylie AALIYAH</span>
+              </span>
+            </div>
+            <div class="notif-seek" role="progressbar" aria-valuenow="42" aria-valuemin="0" aria-valuemax="100" aria-label="Position dans le titre"><i></i></div>
+            <div class="notif-actions">
+              <button type="button" aria-label="Ordre aléatoire"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h4l8 10h4M4 17h4l3-3.5M17 4l3 3-3 3M17 14l3 3-3 3"/></svg></button>
+              <button type="button" aria-label="Titre précédent"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zm3 7 9-6v12z"/></svg></button>
+              <button class="lead" type="button" aria-label="Lecture en cours, mettre en pause"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></button>
+              <button type="button" aria-label="Titre suivant"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM6 6l9 6-9 6z"/></svg></button>
+              <button type="button" aria-label="Répéter"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 3l3 3-3 3M20 6H8a4 4 0 0 0-4 4M7 21l-3-3 3-3M4 18h12a4 4 0 0 0 4-4"/></svg></button>
+            </div>
+          </div>
+
+          <!-- Le transfert continue hors de l'app : sa notification est la
+               contrepartie de la promesse faite a l'ecran des telechargements. -->
+          <div class="notif">
+            <div class="notif-head"><i aria-hidden="true"></i>NeuroBeats<span>· maintenant</span></div>
+            <div>
+              <p class="titre">Téléchargement 42 %</p>
+              <p class="detail">8 titres sur 21 · 71 Mo sur 167 Mo</p>
+            </div>
+            <div class="track working" role="progressbar" aria-valuenow="42" aria-valuemin="0" aria-valuemax="100" aria-label="Téléchargement de la playlist"><i style="width: 42%"></i></div>
+            <div class="notif-actions">
+              <button class="text" type="button">Suspendre</button>
+              <button class="text" type="button">Tout annuler</button>
+            </div>
+          </div>
+
+          <!-- Une notification qui n'est pas la notre : le volet appartient au
+               telephone, nos deux notifications y vivent parmi les autres. -->
+          <div class="notif notif--autre">
+            <div class="notif-head"><i aria-hidden="true"></i>Messages<span>· 2 min</span></div>
+            <p class="corps"><b>Camille</b> — On se retrouve au studio samedi ?</p>
+          </div>
+        </div>
+      </div>
+      <figcaption>
+        <h2>8 · Volet de notifications, pendant l'écoute</h2>
+        <p>Surface système, pas la nôtre : nous ne choisissons que ce que l'app déclare — la pochette, les titres, les actions et l'accent, qui n'apparaît que sur la commande principale. La forme, les 48 dp des cibles et les coins viennent d'Android. La seconde notification ferme la boucle de l'écran 5 : le transfert continue quand l'app est fermée, et il est pilotable d'ici.</p>
+      </figcaption>
+    </figure>
+
+  </div>
+</div>
+</body>
+</html>

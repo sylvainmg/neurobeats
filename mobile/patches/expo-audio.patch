@@ -1,0 +1,286 @@
+diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt
+--- a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt	2026-09-22 23:34:16.628512876 +0300
++++ b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt	2026-09-22 23:34:16.630357330 +0300
+@@ -25,6 +25,7 @@
+ private const val PLAYBACK_STATUS_UPDATE = "playbackStatusUpdate"
+ private const val AUDIO_SAMPLE_UPDATE = "audioSampleUpdate"
+ private const val SEEK_JUMP_INTERVAL_MS: Long = 10_000
++private const val SESSION_NAVIGATION = "sessionNavigation"
+ 
+ @UnstableApi
+ class AudioPlayer(
+@@ -224,6 +225,16 @@
+     mediaSession = buildBasicMediaSession(context, ref)
+   }
+ 
++  /**
++   * Fait remonter au JavaScript une demande de navigation (« titre précédent ou
++   * suivant ») venue des contrôles du système, écran verrouillé ou
++   * notification. Le lecteur seul sait ce que la direction veut dire (l'ordre
++   * d'écoute, pas celui du dossier).
++   */
++  fun envoyerNavigation(direction: String) {
++    emit(SESSION_NAVIGATION, mapOf("direction" to direction))
++  }
++
+   private fun sendAudioSampleUpdate(sample: List<Float>) {
+     val body = mapOf(
+       "channels" to listOf(
+diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecords.kt b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecords.kt
+--- a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecords.kt	2026-09-22 23:34:16.636489666 +0300
++++ b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecords.kt	2026-09-22 23:34:16.638309266 +0300
+@@ -110,7 +110,9 @@
+ class AudioLockScreenOptions(
+   @Field val showSeekForward: Boolean,
+   @Field val showSeekBackward: Boolean,
+-  @Field val isLiveStream: Boolean? = null
++  @Field val isLiveStream: Boolean? = null,
++  @Field val showSkipPrevious: Boolean = false,
++  @Field val showSkipNext: Boolean = false
+ ) : Record
+ 
+ enum class InterruptionMode(val value: String) : Enumerable {
+diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt
+--- a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt	2026-09-22 23:34:16.644835007 +0300
++++ b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt	2026-09-22 23:34:16.646782484 +0300
+@@ -90,6 +90,12 @@
+ 
+         ACTION_SEEK_FORWARD -> currentPlayerRef.seekTo(currentPlayerRef.currentPosition + SEEK_INTERVAL_MS)
+         ACTION_SEEK_BACKWARD -> currentPlayerRef.seekTo(currentPlayerRef.currentPosition - SEEK_INTERVAL_MS)
++
++        // La navigation ne se fait pas ici : le lecteur JavaScript sait seul
++        // ce que « précédent » veut dire (l'historique d'écoute). On lui
++        // renvoie donc la direction par événement, comme un bouton d'écran.
++        ACTION_NAV_PREVIOUS -> currentPlayer?.envoyerNavigation(DIRECTION_PREVIOUS)
++        ACTION_NAV_NEXT -> currentPlayer?.envoyerNavigation(DIRECTION_NEXT)
+       }
+     }
+ 
+@@ -192,12 +198,12 @@
+       val compactViewIndices = mutableListOf<Int>()
+       var currentIndex = 0
+ 
+-      if (currentOptions?.showSeekBackward == true) {
++      if (currentOptions?.showSkipPrevious == true) {
+         builder.addAction(
+           NotificationCompat.Action(
+-            androidx.media3.session.R.drawable.media3_icon_skip_back,
+-            "Seek Backward",
+-            buildActionPendingIntent(ACTION_SEEK_BACKWARD)
++            android.R.drawable.ic_media_previous,
++            "Previous",
++            buildActionPendingIntent(ACTION_NAV_PREVIOUS)
+           )
+         )
+         compactViewIndices.add(currentIndex)
+@@ -218,6 +224,29 @@
+       compactViewIndices.add(currentIndex)
+       currentIndex++
+ 
++      if (currentOptions?.showSkipNext == true) {
++        builder.addAction(
++          NotificationCompat.Action(
++            android.R.drawable.ic_media_next,
++            "Next",
++            buildActionPendingIntent(ACTION_NAV_NEXT)
++          )
++        )
++        compactViewIndices.add(currentIndex)
++        currentIndex++
++      }
++
++      if (currentOptions?.showSeekBackward == true) {
++        builder.addAction(
++          NotificationCompat.Action(
++            androidx.media3.session.R.drawable.media3_icon_skip_back,
++            "Seek Backward",
++            buildActionPendingIntent(ACTION_SEEK_BACKWARD)
++          )
++        )
++        currentIndex++
++      }
++
+       if (currentOptions?.showSeekForward == true) {
+         builder.addAction(
+           NotificationCompat.Action(
+@@ -226,7 +255,6 @@
+             buildActionPendingIntent(ACTION_SEEK_FORWARD)
+           )
+         )
+-        compactViewIndices.add(currentIndex)
+       }
+ 
+       style.setShowActionsInCompactView(*compactViewIndices.toIntArray())
+@@ -240,6 +268,18 @@
+     val session = mediaSession ?: return
+     val mediaButtons = mutableListOf<CommandButton>()
+ 
++    // Add skip-to-previous button if enabled
++    if (currentOptions?.showSkipPrevious == true) {
++      mediaButtons.add(
++        CommandButton.Builder(CommandButton.ICON_PREVIOUS)
++          .setDisplayName("Previous")
++          .setEnabled(true)
++          .setSessionCommand(SessionCommand(ACTION_NAV_PREVIOUS, Bundle.EMPTY))
++          .setSlots(CommandButton.SLOT_BACK)
++          .build()
++      )
++    }
++
+     // Add seek backward button if enabled
+     if (currentOptions?.showSeekBackward == true) {
+       mediaButtons.add(
+@@ -274,6 +314,18 @@
+       )
+     }
+ 
++    // Add skip-to-next button if enabled
++    if (currentOptions?.showSkipNext == true) {
++      mediaButtons.add(
++        CommandButton.Builder(CommandButton.ICON_NEXT)
++          .setDisplayName("Next")
++          .setEnabled(true)
++          .setSessionCommand(SessionCommand(ACTION_NAV_NEXT, Bundle.EMPTY))
++          .setSlots(CommandButton.SLOT_FORWARD)
++          .build()
++      )
++    }
++
+     session.setCustomLayout(mediaButtons)
+     session.setMediaButtonPreferences(mediaButtons)
+   }
+@@ -371,7 +423,11 @@
+           updateMetadata(metadata)
+         }
+         val session = MediaSession.Builder(context, sessionPlayer)
+-          .setCallback(AudioMediaSessionCallback())
++          .setCallback(
++            AudioMediaSessionCallback(
++              onNavigate = { direction -> currentPlayer?.envoyerNavigation(direction) }
++            )
++          )
+           .build()
+ 
+         // Replace the basic media session with a session connected to our playback service.
+@@ -452,7 +508,11 @@
+           updateMetadata(metadata)
+         }
+         val session = MediaSession.Builder(context, sessionPlayer)
+-          .setCallback(AudioMediaSessionCallback())
++          .setCallback(
++            AudioMediaSessionCallback(
++              onNavigate = { direction -> currentPlayer?.envoyerNavigation(direction) }
++            )
++          )
+           .build()
+ 
+         player.mediaSession.release()
+@@ -559,6 +619,12 @@
+     const val ACTION_SEEK_FORWARD = "expo.modules.audio.action.SEEK_FORWARD"
+     const val ACTION_SEEK_BACKWARD = "expo.modules.audio.action.SEEK_BACKWARD"
+ 
++    const val ACTION_NAV_PREVIOUS = "expo.modules.audio.action.NAV_PREVIOUS"
++    const val ACTION_NAV_NEXT = "expo.modules.audio.action.NAV_NEXT"
++
++    const val DIRECTION_PREVIOUS = "previous"
++    const val DIRECTION_NEXT = "next"
++
+     const val SEEK_INTERVAL_MS = 10000L
+   }
+ }
+diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt
+--- a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt	2026-09-22 23:34:16.653274011 +0300
++++ b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt	2026-09-22 23:34:16.655094655 +0300
+@@ -10,7 +10,9 @@
+ import com.google.common.util.concurrent.ListenableFuture
+ 
+ @OptIn(UnstableApi::class)
+-class AudioMediaSessionCallback : MediaSession.Callback {
++class AudioMediaSessionCallback(
++  private val onNavigate: (String) -> Unit = {}
++) : MediaSession.Callback {
+   override fun onConnect(
+     session: MediaSession,
+     controller: MediaSession.ControllerInfo
+@@ -35,6 +37,8 @@
+           MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
+             .add(SessionCommand(AudioControlsService.ACTION_SEEK_BACKWARD, Bundle.EMPTY))
+             .add(SessionCommand(AudioControlsService.ACTION_SEEK_FORWARD, Bundle.EMPTY))
++            .add(SessionCommand(AudioControlsService.ACTION_NAV_PREVIOUS, Bundle.EMPTY))
++            .add(SessionCommand(AudioControlsService.ACTION_NAV_NEXT, Bundle.EMPTY))
+             .build()
+         )
+         .build()
+@@ -56,6 +60,8 @@
+       AudioControlsService.ACTION_SEEK_BACKWARD -> {
+         session.player.seekTo(session.player.currentPosition - AudioControlsService.SEEK_INTERVAL_MS)
+       }
++      AudioControlsService.ACTION_NAV_PREVIOUS -> onNavigate(AudioControlsService.DIRECTION_PREVIOUS)
++      AudioControlsService.ACTION_NAV_NEXT -> onNavigate(AudioControlsService.DIRECTION_NEXT)
+     }
+     return super.onCustomCommand(session, controller, command, args)
+   }
+diff --git a/mobile/node_modules/expo-audio/build/AudioConstants.d.ts b/mobile/node_modules/expo-audio/build/AudioConstants.d.ts
+--- a/mobile/node_modules/expo-audio/build/AudioConstants.d.ts	2026-09-22 23:34:16.678302800 +0300
++++ b/mobile/node_modules/expo-audio/build/AudioConstants.d.ts	2026-09-22 23:34:16.680061662 +0300
+@@ -15,5 +15,15 @@
+      * and scrub bar, and disable seek controls.
+      */
+     isLiveStream?: boolean;
++    /**
++     * Whether the skip-to-previous button should be displayed on the lock screen and the
++     * playback notification. Emits the `sessionNavigation` event with `direction: "previous"`.
++     */
++    showSkipPrevious?: boolean;
++    /**
++     * Whether the skip-to-next button should be displayed on the lock screen and the
++     * playback notification. Emits the `sessionNavigation` event with `direction: "next"`.
++     */
++    showSkipNext?: boolean;
+ };
+ //# sourceMappingURL=AudioConstants.d.ts.map
+\ Pas de fin de ligne à la fin du fichier
+diff --git a/mobile/node_modules/expo-audio/build/AudioModule.types.d.ts b/mobile/node_modules/expo-audio/build/AudioModule.types.d.ts
+--- a/mobile/node_modules/expo-audio/build/AudioModule.types.d.ts	2026-09-22 23:34:16.686327373 +0300
++++ b/mobile/node_modules/expo-audio/build/AudioModule.types.d.ts	2026-09-22 23:34:16.688131049 +0300
+@@ -222,6 +222,10 @@
+     playbackStatusUpdate(status: AudioStatus): void;
+     /** Fired when audio sampling is enabled and new sample data is available. */
+     audioSampleUpdate(data: AudioSample): void;
++    /** Fired when the user taps previous/next on the playback notification or lock screen. */
++    sessionNavigation(data: {
++        direction: string;
++    }): void;
+ };
+ export declare class AudioRecorder extends SharedObject<RecordingEvents> {
+     /**
+diff --git a/mobile/node_modules/expo-audio/src/AudioConstants.ts b/mobile/node_modules/expo-audio/src/AudioConstants.ts
+--- a/mobile/node_modules/expo-audio/src/AudioConstants.ts	2026-09-22 23:34:16.661703602 +0300
++++ b/mobile/node_modules/expo-audio/src/AudioConstants.ts	2026-09-22 23:34:16.663572684 +0300
+@@ -16,4 +16,14 @@
+    * and scrub bar, and disable seek controls.
+    */
+   isLiveStream?: boolean;
++  /**
++   * Whether the skip-to-previous button should be displayed on the lock screen and the
++   * playback notification. Emits the `sessionNavigation` event with `direction: "previous"`.
++   */
++  showSkipPrevious?: boolean;
++  /**
++   * Whether the skip-to-next button should be displayed on the lock screen and the
++   * playback notification. Emits the `sessionNavigation` event with `direction: "next"`.
++   */
++  showSkipNext?: boolean;
+ };
+diff --git a/mobile/node_modules/expo-audio/src/AudioModule.types.ts b/mobile/node_modules/expo-audio/src/AudioModule.types.ts
+--- a/mobile/node_modules/expo-audio/src/AudioModule.types.ts	2026-09-22 23:34:16.670005123 +0300
++++ b/mobile/node_modules/expo-audio/src/AudioModule.types.ts	2026-09-22 23:34:16.671866674 +0300
+@@ -280,6 +280,8 @@
+   playbackStatusUpdate(status: AudioStatus): void;
+   /** Fired when audio sampling is enabled and new sample data is available. */
+   audioSampleUpdate(data: AudioSample): void;
++  /** Fired when the user taps previous/next on the playback notification or lock screen. */
++  sessionNavigation(data: { direction: string }): void;
+ };
+ 
+ export declare class AudioRecorder extends SharedObject<RecordingEvents> {
