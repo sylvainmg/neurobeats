@@ -7,3 +7,6 @@ backend/neurobeats.db
 backend/stream_cache.json
 backend/*.bak
 backend/covers/
+backend/prepared/
+/adb
+landing/
