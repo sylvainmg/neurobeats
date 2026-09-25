@@ -48,6 +48,17 @@ export type TitreEnPreparation = {
 
 type Etat = {
   session: EtatSession;
+  /**
+   * Adresse du dernier bureau lu (scan valide), persistée.
+   *
+   * La session elle-même ne survit pas à un redémarrage — elle vaut le temps
+   * d'un transfert. Mais les paroles, si : sans cette adresse, le panneau du
+   * lecteur n'a plus où poser la question et affiche « Paroles indisponibles »
+   * alors que le bureau répondrait très bien. On garde donc la dernière
+   * adresse connue. Elle n'est oubliée que si le bureau ne répond plus
+   * (voir `chargerParoles`, qui retombe alors sur le message d'invitation).
+   */
+  baseBureau: string | null;
   suivis: Suivi[];
   transferts: number;
   /** Combien de téléchargements ont fini depuis le lancement de l'app. */
@@ -485,6 +496,7 @@ function animationsEffectives(): boolean {
 
 export const useApp = create<Etat>((set, get) => ({
   session: { phase: "repos" },
+  baseBureau: null,
   suivis: [],
   transferts: 0,
   transfertsTermines: 0,
@@ -498,6 +510,10 @@ export const useApp = create<Etat>((set, get) => ({
   initialiser: async () => {
     await db();
     const wifi = (await repo.lireReglage("wifi_uniquement", "1")) === "1";
+    // La dernière adresse de bureau connue est relue au démarrage : sans elle,
+    // les paroles d'un titre déjà écouté n'ont plus où être demandées, alors
+    // que le bureau est souvent allumé.
+    const base = (await repo.lireReglage("base_bureau", "")).trim() || null;
     animationsSystemeReduites = await AccessibilityInfo.isReduceMotionEnabled().catch(
       () => false,
     );
@@ -509,6 +525,7 @@ export const useApp = create<Etat>((set, get) => ({
     gestionnaire.regler({ wifiUniquement: wifi });
     set({
       wifiUniquement: wifi,
+      baseBureau: base,
       animations: animationsEffectives(),
       notificationsAccordees: notifs,
     });
@@ -634,7 +651,12 @@ export const useApp = create<Etat>((set, get) => ({
     set({
       session: { phase: "ouverte", code: lu.code, manifeste: analyse.manifeste },
       bilan: bilanDe(analyse.manifeste, locales),
+      baseBureau: lu.code.base,
     });
+    // L'adresse est notée pour être relue au prochain démarrage : c'est elle
+    // qui permet de demander les paroles d'un titre déjà écouté, bien après
+    // que la session de transfert a été fermée.
+    void repo.ecrireReglage("base_bureau", lu.code.base);
     return true;
   },
 

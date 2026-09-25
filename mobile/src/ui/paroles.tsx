@@ -61,13 +61,12 @@ export function FeuilleParoles({ visible, onFermer }: { visible: boolean; onFerm
   const index = useLecture((etat) => etat.index);
   const position = useLecture((etat) => etat.position);
   const duree = useLecture((etat) => etat.duree);
-  const session = useApp((etat) => etat.session);
-  // L'adresse du bureau, si une session a été scannée. Sans elle, seules les
-  // paroles déjà sur le téléphone sont lisibles (le mode avion).
-  const base = session.phase === "ouverte" ? session.code.base : null;
-
   const piste = file[index] ?? null;
   const videoId = piste?.id ?? null;
+  // L'adresse du bureau, PERSISTÉE (dernier scan valide). La session, elle, ne
+  // survit pas à un redémarrage : c'est pourquoi les paroles étaient
+  // « indisponibles » alors que le bureau répondait très bien.
+  const base = useApp((etat) => etat.baseBureau);
 
   const [paroles, setParoles] = useState<Paroles | null>(null);
   const [chargement, setChargement] = useState(false);
@@ -207,7 +206,7 @@ export function FeuilleParoles({ visible, onFermer }: { visible: boolean; onFerm
               {erreur ??
                 (base
                   ? "L'ordinateur n'a trouvé aucune source pour ce titre."
-                  : "Les paroles sont téléchargées depuis l'ordinateur. Scanne son code pour les obtenir.")}
+                  : "Les paroles viennent de l'ordinateur. Scanne son code une fois pour qu'il sache où te les envoyer.")}
             </Text>
             {erreur ? (
               <Bouton

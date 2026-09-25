@@ -151,6 +151,33 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
     }
   }
 
+  // Compte de téléchargement, déduit de l'état local ET de la playlist affichée.
+  //
+  // Le seul `local` ne suffit pas : tant que le premier GET n'est pas revenu il
+  // est `null`, et `local.manquant === 0` ferait afficher « Téléchargée » alors
+  // qu'on n'a rien vérifié du tout. `songs.length` sert donc de plancher — tant
+  // qu'on ignore lesquels des titres sont sur le disque, tout est à traiter.
+  //
+  // Ces valeurs sont calculées AVANT les retours anticipés : elles ne dépendent
+  // que d'un store, jamais de `playlist`, et le reste du composant s'en sert.
+  const songs = playlist?.songs ?? [];
+  const pret = local?.pret ?? 0;
+  const manquant = Math.max(local?.manquant ?? 0, songs.length - pret);
+  // « En cours » ne se déduit PAS du seul fait qu'il manque des titres : sinon
+  // le bouton serait figé sur « Téléchargement… » avant tout clic, et
+  // « Compléter » n'apparaîtrait jamais. Il faut le geste — et il doit survivre
+  // au retour de la requête, qui arrive AVANT que le serveur ait téléchargé quoi
+  // que ce soit (d'où le double-clic qu'on corrige ici).
+  //
+  // La demande s'éteint d'elle-même quand le disque a rattrapé : c'est la seule
+  // information qui dit « c'est bon ». Sa réinitialisation se fait par CLÉ, et
+  // non dans un effet — le linter refuse à juste titre qu'un rendu écrive
+  // l'état qu'il vient de lire, et cela évite un rendu de plus. Un échec réseau
+  // la laisse visible : c'est honnête, l'utilisateur peut relancer.
+  const [demandePour, setDemandePour] = useState(0);
+  if (demandePour > 0 && manquant === 0) setDemandePour(0);
+  const enCours = downloading || (demandePour > 0 && manquant > 0);
+
   if (!playlist && !notFound && !error) {
     return (
       <div className="space-y-8 py-6">
@@ -173,8 +200,13 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
     );
   }
 
-  const songs = playlist.songs ?? [];
   const cover = songs[0]?.video_id ?? "";
+
+  /** Lance (ou relance) le téléchargement des titres absents. */
+  function telecharger() {
+    setDemandePour(Date.now());
+    void download();
+  }
 
   return (
     <div className="space-y-8 py-6">
@@ -236,11 +268,7 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
             {/* L'état local se dit dans la même ligne que le compte : « 12
                 titres, 4 sur cet appareil » est l'information qui décide si un
                 téléchargement est utile. */}
-            {local && local.pret > 0
-              ? ` · ${local.pret} sur cet appareil${
-                  local.manquant > 0 ? `, ${local.manquant} à télécharger` : ""
-                }`
-              : ""}
+            {pret > 0 ? ` · ${pret} sur cet appareil${manquant > 0 ? `, ${manquant} à télécharger` : ""}` : ""}
           </p>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -258,35 +286,36 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
               {pendingIndex !== null ? "Chargement…" : "Lecture"}
             </Button>
             {/* Téléchargement local : le libellé porte le compte, donc le
-                bouton dit ce qu'il va faire et non « peut-être ». Compléter un
-                téléchargement en cours est toujours possible (il ne relance que
-                les titres absents) ; hors ligne, le geste ne peut pas aboutir. */}
+                bouton dit ce qu'il va faire et non « peut-être ». `enCours`
+                (calculé plus haut) tient l'état pendant que le disque rattrape :
+                sans lui, le bouton retombait sur « Compléter (N) » avec le même
+                compte, et l'utilisateur devait recliquer. */}
             {songs.length > 0 && (
               <Button
                 variant="secondary"
                 size="lg"
                 className="rounded-full"
-                disabled={!online || downloading || (local?.manquant ?? songs.length) === 0}
+                disabled={!online || enCours || manquant === 0}
                 title={
                   !online
                     ? "Téléchargement impossible hors ligne"
-                    : local?.manquant === 0
+                    : manquant === 0
                       ? "Tous les titres sont sur cet appareil"
                       : undefined
                 }
-                onClick={() => void download()}
+                onClick={telecharger}
               >
-                {downloading ? (
+                {enCours ? (
                   <Loader2 className="animate-spin" aria-hidden="true" />
                 ) : (
                   <Download aria-hidden="true" />
                 )}
-                {downloading
+                {enCours
                   ? "Téléchargement…"
-                  : local?.manquant === 0
+                  : manquant === 0
                     ? "Téléchargée"
-                    : local && local.pret > 0
-                      ? `Compléter (${local.manquant})`
+                    : pret > 0
+                      ? `Compléter (${manquant})`
                       : "Télécharger"}
               </Button>
             )}
@@ -483,7 +512,7 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
                       d'un coup d'œil ce qu'on peut écouter sans réseau. Discrète
                       (jamais une couleur alone), elle vaut pour le fichier
                       réellement présent sur le disque. */}
-                  {local && estPret(song.video_id) && (
+                  {pret > 0 && estPret(song.video_id) && (
                     <span
                       title="Sur cet appareil — écoutable hors ligne"
                       className="bg-primary/15 text-primary inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
