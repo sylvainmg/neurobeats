@@ -21,6 +21,9 @@ export const DOSSIER_TRANSFERT = new Directory(Paths.document, "transfert");
 /** Pochettes rapatriées à l'import, pour rester visibles en mode avion. */
 export const DOSSIER_POCHETTES = new Directory(Paths.document, "pochettes");
 
+/** Paroles rapatriées à l'import : elles voyagent avec le titre, comme l'image. */
+export const DOSSIER_PAROLES = new Directory(Paths.document, "paroles");
+
 /**
  * Construit le File d'un fichier du dossier transfert, nom quelconque compris.
  *

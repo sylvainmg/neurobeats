@@ -380,6 +380,16 @@ export function IconQueue(props: IconProps) {
   );
 }
 
+/** Paroles : la bulle de chant, avec sa queue en bas à gauche. */
+export function IconParoles(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <Path d="M20 4H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h4l3 4 3-4h6a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1Z" />
+      <Path d="M7 9h10M7 12h6" />
+    </Glyph>
+  );
+}
+
 export function IconPaste(props: IconProps) {
   return (
     <Glyph {...props}>

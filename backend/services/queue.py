@@ -189,6 +189,32 @@ def current_track() -> dict | None:
         return dict(_HISTORY[-1]) if _HISTORY else None
 
 
+def queue_set_tracks(tracks: list) -> None:
+    """Remplace la file a venir par une liste de titres choisis (une playlist).
+
+    La playlist devient la source de verite de la file : la boucle de streaming la
+    consomme linealement, puis le remplissage anticipatif prend le relais quand
+    elle se vide. Un titre deja joue est ecarte (il ne doit pas se retrouver
+    dans la file juste apres avoir ete joue), et le mood de derive est aligne sur
+    le dernier titre pour que le relais de reco reste coherent.
+
+    Args:
+        tracks: Titres `{video_id, title, channel, genre?}` dans l'ordre joue.
+    """
+    global _POSITION, _MOOD
+    with _LOCK:
+        deja_vus = {t.get("video_id") for t in _HISTORY}
+        _QUEUE[:] = [
+            {"video_id": t.get("video_id", ""), "title": t.get("title", ""),
+             "channel": t.get("channel", ""), "genre": t.get("genre", "autre")}
+            for t in tracks
+            if t.get("video_id") and t.get("video_id") not in deja_vus
+        ]
+        _POSITION = 0
+        if _QUEUE and _QUEUE[-1].get("title"):
+            _MOOD = _QUEUE[-1]["title"]
+
+
 def queue_apply_shuffle():
     """Materialise l'ordre aleatoire dans la file : l'affichage = la lecture.
 

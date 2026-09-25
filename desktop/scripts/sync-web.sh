@@ -62,10 +62,17 @@ open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
 PY
 
 say "→ Installation des dépendances (copie)"
-( cd "$SRC" && npm ci --no-audit --no-fund --loglevel=error )
+# Les devDependencies sont indispensables au build (Turbopack, PostCSS,
+# Tailwind) : un NODE_ENV=production hérité du shell les fait sauter, et le
+# build échoue ensuite sur « Cannot find module '@tailwindcss/postcss' ».
+( cd "$SRC" && NODE_ENV=development npm ci --include=dev --no-audit --no-fund --loglevel=error )
 
 say "→ Build Next (NEXT_PUBLIC_API_URL=$API_URL)"
-( cd "$SRC" && NEXT_PUBLIC_API_URL="$API_URL" npm run build )
+# NODE_ENV explicite : le build doit être celui de PRODUCTION quoi qu'il arrive.
+# Hérité du shell appelant, un NODE_ENV=development fait échouer le prerender
+# (React résout deux copies de lui-même et `useContext` tombe sur null) — un
+# échec qui n'a rien à voir avec le code de la copie de travail.
+( cd "$SRC" && NODE_ENV=production NEXT_PUBLIC_API_URL="$API_URL" npm run build )
 
 say "→ Assemblage du runtime standalone"
 if [ ! -d "$SRC/.next/standalone" ]; then

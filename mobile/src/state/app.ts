@@ -17,6 +17,7 @@ import { Gestionnaire, transfertPersistant } from "@/transfer/downloader";
 import type { Spec, Suivi } from "@/transfer/downloader";
 import { dureeDeFichier } from "@/transfer/duree";
 import { telechargerPochette } from "@/transfer/covers";
+import { chargerParoles } from "@/transfer/paroles";
 import { demanderNotifications, notificationsAutorisees } from "@/transfer/notifications";
 import { estimerPoids } from "@/transfer/format";
 import { analyserManifeste, type Manifeste, type PisteManifeste } from "@/transfer/manifest";
@@ -218,6 +219,26 @@ async function retenirPochette(videoId: string, adresse: string | null): Promise
 }
 
 /**
+ * Retient les paroles du titre, pour qu'il s'écoute hors ligne.
+ *
+ * Comme la pochette, elles voyagent AVEC le titre : sans elles, le panneau du
+ * lecteur n'aurait rien à montrer en mode avion alors que tout le reste est là.
+ *
+ * Volontairement non attendu : le texte est un bonus, et faire patienter le
+ * fichier audio derrière une requête réseau ferait perdre au transfert la
+ * seule chose qu'il doit garantir.
+ */
+function retenirParoles(
+  videoId: string,
+  base: string | null,
+  titre: string,
+  chaine: string,
+  duree: number,
+): void {
+  void chargerParoles(videoId, base, titre, chaine, duree);
+}
+
+/**
  * L'ordinateur prepare ce qu'il n'a jamais lu : on garde la liste des titres qui
  * ne sont pas encore prêts et on redemande le manifeste jusqu'à ce qu'ils le
  * soient. C'est ce qui permet d'annoncer l'attente (« ton ordinateur prépare ce
@@ -379,6 +400,14 @@ async function pomperPreparation(code: Code, manifeste: Manifeste, nomLot: strin
       raisonsEchec.delete(piste.video_id);
       debuts.delete(piste.video_id);
       await retenirPochette(piste.video_id, piste.pochette);
+      // Les paroles suivent le titre, sans jamais le retarder.
+      retenirParoles(
+        piste.video_id,
+        code.base,
+        piste.titre,
+        piste.chaine,
+        piste.duree,
+      );
       gestionnaire.enFile([specDe(piste, analyse.manifeste)], nomLot);
     }
     publierPreparation();
@@ -657,6 +686,15 @@ export const useApp = create<Etat>((set, get) => ({
       const reliee = await repo.pisteDansPlaylist(piste.video_id, manifeste.playlist_id);
       if (reliee?.etat === "chez_toi" && reliee.fichier) continue;
       await retenirPochette(piste.video_id, piste.pochette);
+      // Même raison que pour la pochette : un titre hors ligne sans paroles
+      // n'a qu'un panneau vide. En passant, ça ne retarde pas l'audio.
+      retenirParoles(
+        piste.video_id,
+        code.base,
+        piste.titre,
+        piste.chaine,
+        piste.duree,
+      );
       specs.push(specDe(piste, manifeste));
     }
     // Le système ne peut pas annoncer la progression sans cette permission :
@@ -787,6 +825,18 @@ export const useApp = create<Etat>((set, get) => ({
         etat: "absent",
       });
       await retenirPochette(videoId, pochette);
+      // Un titre téléchargé directement (mini-navigateur) emporte aussi ses
+      // paroles, sinon il serait le seul de la bibliothèque à ne pas en avoir.
+      // L'adresse du bureau vient de la session scannée ; sans elle, seules les
+      // paroles déjà sur le téléphone seront lisibles.
+      const sessionCourante = get().session;
+      retenirParoles(
+        videoId,
+        sessionCourante.phase === "ouverte" ? sessionCourante.code.base : null,
+        titre,
+        chaine,
+        duree,
+      );
       const accordees = await demanderNotifications();
       set({ notificationsAccordees: accordees });
       gestionnaire.enFile(

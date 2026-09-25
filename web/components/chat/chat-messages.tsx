@@ -234,7 +234,7 @@ export function ChatComposer({
       }}
       className={cn("nb-selectable border-border border-t p-3", disabled && "opacity-50 pointer-events-none")}
     >
-      <div className="flex items-end gap-2">
+      <div className="flex items-stretch gap-2">
         <div
           className={cn(
             "bg-surface-hover flex-1 rounded-3xl",
@@ -256,7 +256,7 @@ export function ChatComposer({
             maxLength={MAX_MESSAGE_CHARS}
             disabled={disabled}
             className={cn(
-              "text-foreground max-h-40 min-h-10 rounded-3xl",
+              "text-foreground max-h-40 rounded-3xl",
               atLimit && "focus-visible:ring-destructive",
             )}
           />
@@ -267,7 +267,7 @@ export function ChatComposer({
             size="icon"
             aria-label="Arrêter la réponse"
             onClick={onStop}
-            className="rounded-full"
+            className="rounded-full shrink-0"
           >
             <Square className="size-3.5 fill-current" />
           </Button>
@@ -277,7 +277,7 @@ export function ChatComposer({
             size="icon"
             aria-label="Envoyer"
             disabled={!canSend}
-            className="rounded-full"
+            className="rounded-full shrink-0"
           >
             <Send className="size-4" />
           </Button>

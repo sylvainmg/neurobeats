@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Check,
+  Download,
+  HardDriveDownload,
   ListMusic,
   Loader2,
   Pencil,
@@ -25,7 +27,10 @@ import {
 import { TrackCover } from "@/components/track-cover";
 import { ApiError, api, type Track } from "@/lib/api";
 import { usePlaylists } from "@/lib/playlists";
+import { usePlaylistLocal } from "@/lib/use-playlist-local";
+import { useOnline } from "@/lib/online";
 import { coverSizes } from "@/lib/track";
+import { cn } from "cn";
 
 function formatDate(iso: string): string {
   if (!iso) return "";
@@ -62,6 +67,12 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const transfer = useTransferTicket(playlistId);
+  // Téléchargement local : ce que ce poste garde sur son disque pour cette
+  // playlist. `manquant` pilote le bouton, `estPret` la pastille par titre.
+  const { local, downloading, download, estPret } = usePlaylistLocal(playlistId);
+  // Hors ligne, aucun téléchargement ne peut aboutir : le bouton reste visible
+  // (il annonce l'état réel) mais inerte, et le bandeau explique pourquoi.
+  const online = useOnline();
 
   // Charge le détail tant que le store ne l'a pas (ou s'il est périmé).
   useEffect(() => {
@@ -222,6 +233,14 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
             {songs.length} titre{songs.length > 1 ? "s" : ""}
             {playlist.mood ? ` · ${playlist.mood}` : ""}
             {playlist.created ? ` · créée le ${formatDate(playlist.created)}` : ""}
+            {/* L'état local se dit dans la même ligne que le compte : « 12
+                titres, 4 sur cet appareil » est l'information qui décide si un
+                téléchargement est utile. */}
+            {local && local.pret > 0
+              ? ` · ${local.pret} sur cet appareil${
+                  local.manquant > 0 ? `, ${local.manquant} à télécharger` : ""
+                }`
+              : ""}
           </p>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -238,6 +257,39 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
               )}
               {pendingIndex !== null ? "Chargement…" : "Lecture"}
             </Button>
+            {/* Téléchargement local : le libellé porte le compte, donc le
+                bouton dit ce qu'il va faire et non « peut-être ». Compléter un
+                téléchargement en cours est toujours possible (il ne relance que
+                les titres absents) ; hors ligne, le geste ne peut pas aboutir. */}
+            {songs.length > 0 && (
+              <Button
+                variant="secondary"
+                size="lg"
+                className="rounded-full"
+                disabled={!online || downloading || (local?.manquant ?? songs.length) === 0}
+                title={
+                  !online
+                    ? "Téléchargement impossible hors ligne"
+                    : local?.manquant === 0
+                      ? "Tous les titres sont sur cet appareil"
+                      : undefined
+                }
+                onClick={() => void download()}
+              >
+                {downloading ? (
+                  <Loader2 className="animate-spin" aria-hidden="true" />
+                ) : (
+                  <Download aria-hidden="true" />
+                )}
+                {downloading
+                  ? "Téléchargement…"
+                  : local?.manquant === 0
+                    ? "Téléchargée"
+                    : local && local.pret > 0
+                      ? `Compléter (${local.manquant})`
+                      : "Télécharger"}
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="lg"
@@ -356,10 +408,12 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
         </section>
       )}
 
-      {pendingIndex !== null && (
-        <p role="status" className="text-muted-foreground flex items-center gap-2 text-xs">
-          <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
-          Chargement du titre… le son démarre dès qu’il est prêt.
+      {/* Annonce pour les lecteurs d'écran : la ligne porte déjà le spinner,
+          mais un `role="status"` reste la seule chose que le narrateur lit
+          quand le focus est ailleurs. On ne répète pas le visuel complet. */}
+      {pendingIndex !== null && pendingIndex < songs.length && (
+        <p role="status" className="sr-only">
+          Chargement de {songs[pendingIndex]?.title}…
         </p>
       )}
 
@@ -369,59 +423,88 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
         </div>
       ) : (
         <ul className="space-y-1">
-          {songs.map((song, index) => (
-            <li
-              key={song.video_id}
-              className="group hover:bg-surface-hover flex items-center gap-3 rounded-lg p-2"
-            >
-              <button
-                type="button"
-                onClick={() => void play(index)}
-                disabled={pendingIndex !== null}
-                aria-busy={pendingIndex === index}
-                aria-label={
-                  pendingIndex === index
-                    ? `Chargement de ${song.title}`
-                    : `Lire ${song.title}`
-                }
-                className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:cursor-wait"
+          {songs.map((song, index) => {
+            const isPending = pendingIndex === index;
+            return (
+              <li
+                key={song.video_id}
+                className="group hover:bg-surface-hover flex items-center gap-3 rounded-lg p-2"
               >
-                <span className="text-muted-foreground w-5 shrink-0 text-right text-xs tabular-nums">
-                  {index + 1}
-                </span>
-                <span className="relative size-10 shrink-0">
-                  <TrackCover
-                    videoId={song.video_id}
-                    title={song.title}
-                    sizes={coverSizes(40)}
-                    className="size-10"
-                  />
-                  {/* Le titre demandé porte le seul indicateur animé : on sait
-                      lequel charge, même dans une longue playlist. */}
-                  {pendingIndex === index && (
-                    <span className="bg-background/60 absolute inset-0 grid place-items-center rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => void play(index)}
+                  disabled={pendingIndex !== null}
+                  aria-busy={isPending || undefined}
+                  aria-label={
+                    isPending ? `Chargement de ${song.title}` : `Lire ${song.title}`
+                  }
+                  className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:cursor-wait"
+                >
+                  <span className="text-muted-foreground w-5 shrink-0 text-right text-xs tabular-nums">
+                    {index + 1}
+                  </span>
+                  <span className="relative size-10 shrink-0">
+                    <TrackCover
+                      videoId={song.video_id}
+                      title={song.title}
+                      sizes={coverSizes(40)}
+                      className="size-10"
+                    />
+                    {/* Le titre demandé porte le seul indicateur animé : on sait
+                        lequel charge, même dans une longue playlist. Le voile est
+                        celui de l'historique d'écoute, pour que le geste se lise
+                        pareil partout. */}
+                    <span
+                      className={cn(
+                        "bg-background/60 absolute inset-0 grid place-items-center rounded-lg transition-opacity",
+                        isPending ? "opacity-100" : "opacity-0",
+                      )}
+                    >
                       <Loader2 className="text-primary size-4 animate-spin" aria-hidden="true" />
                     </span>
-                  )}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{song.title}</span>
-                  <span className="text-muted-foreground block truncate text-xs">
-                    {song.channel}
                   </span>
-                </span>
-              </button>
-              <button
-                type="button"
-                aria-label={`Retirer ${song.title} de la playlist`}
-                disabled={busy}
-                onClick={() => void remove(song.video_id)}
-                className="text-muted-foreground hover:text-destructive shrink-0 rounded-full p-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-40 max-md:opacity-100 pointer-coarse:opacity-100"
-              >
-                <X className="size-4" />
-              </button>
-            </li>
-          ))}
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={cn(
+                        "block truncate text-sm font-medium",
+                        isPending && "text-primary",
+                      )}
+                    >
+                      {song.title}
+                    </span>
+                    <span className="text-muted-foreground block truncate text-xs">
+                      {/* Le sous-titre bascule sur l'état, comme dans l'historique :
+                          l'utilisateur sait que le clic a pris, et non qu'il a
+                          échoué, tant que le son n'a pas démarré. */}
+                      {isPending ? "Chargement du titre…" : song.channel}
+                    </span>
+                  </span>
+                  {/* Pastille « sur cet appareil » : le seul endroit où l'on voit
+                      d'un coup d'œil ce qu'on peut écouter sans réseau. Discrète
+                      (jamais une couleur alone), elle vaut pour le fichier
+                      réellement présent sur le disque. */}
+                  {local && estPret(song.video_id) && (
+                    <span
+                      title="Sur cet appareil — écoutable hors ligne"
+                      className="bg-primary/15 text-primary inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                    >
+                      <HardDriveDownload className="size-3" aria-hidden="true" />
+                      Sur cet appareil
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Retirer ${song.title} de la playlist`}
+                  disabled={busy}
+                  onClick={() => void remove(song.video_id)}
+                  className="text-muted-foreground hover:text-destructive shrink-0 rounded-full p-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-40 max-md:opacity-100 pointer-coarse:opacity-100"
+                >
+                  <X className="size-4" />
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
 

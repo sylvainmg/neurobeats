@@ -28,6 +28,7 @@ import { usePlayer } from "@/components/player/player-context";
 import { TrackCover } from "@/components/track-cover";
 import { api, ApiError, type SearchSuggestion, type Track } from "@/lib/api";
 import { coverSizes, formatDuration } from "@/lib/track";
+import { useOnline } from "@/lib/online";
 import { cn } from "cn";
 
 type Status = "idle" | "loading" | "done" | "error";
@@ -197,6 +198,9 @@ export default function SearchPage() {
   // Titre en cours de lancement : la ligne cliquée porte le feedback
   // (spinner + libellé) tant que la lecture n'a pas abouti.
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  // Réseau : la recherche YouTube est injoignable hors ligne, et le bouton de
+  // soumission doit le dire plutôt que d'échouer en silence.
+  const online = useOnline();
 
   const busy = status === "loading";
 
@@ -339,7 +343,14 @@ export default function SearchPage() {
               // restent visibles alors que la requête a disparu du champ.
               if (value === "" && status !== "idle") reset();
             }}
-            placeholder="Titres, artistes, genres…"
+            placeholder={
+              online ? "Titres, artistes, genres…" : "Hors ligne — recherche indisponible"
+            }
+            // La recherche YouTube est le geste le plus dépendant du réseau de
+            // toute la page : hors ligne, le champ reste saisissable (l'utilisateur
+            // peut préparer sa requête) mais la soumission est bloquée, avec un
+            // texte qui explique pourquoi plutôt qu'un bouton mort.
+            disabled={!online}
             autoComplete="off"
             className="bg-surface placeholder:text-muted-foreground h-11 rounded-full pr-10 pl-10 text-base [&::-webkit-search-cancel-button]:hidden"
           />
@@ -359,12 +370,22 @@ export default function SearchPage() {
         <Button
           type="submit"
           size="lg"
-          disabled={!query.trim()}
+          disabled={!query.trim() || !online}
           className="h-11 rounded-full px-6"
         >
           Rechercher
         </Button>
       </form>
+
+      {!online && (
+        <p
+          role="status"
+          className="border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200 rounded-lg border px-3 py-2 text-xs"
+        >
+          Hors ligne : la recherche passe par YouTube. Ta bibliothèque, l&apos;historique
+          et les titres déjà téléchargés restent accessibles.
+        </p>
+      )}
 
       {/* Annonce aux lecteurs d'ecran (visuelle : la ligne de compte ci-dessous). */}
       <p aria-live="polite" className="sr-only">

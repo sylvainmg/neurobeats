@@ -158,6 +158,13 @@ class PlaylistPlayRequest(BaseModel):
     start: int = Field(0, ge=0, description="Index du titre de depart (0 = premier)")
 
 
+class PlaylistLocalDownloadRequest(BaseModel):
+    """Cibles d'un telechargement local ; vide = toute la playlist."""
+
+    video_ids: list[str] = Field(default_factory=list,
+                                description="Titres a telecharger (vide = tous)")
+
+
 # ----------------------------- Chat -------------------------------------------
 class ChatMessage(BaseModel):
     # L'historique renvoye par le serveur contient aussi les `tool_calls` de

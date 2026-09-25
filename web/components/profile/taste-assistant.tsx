@@ -10,6 +10,7 @@ import { ChatHistory } from "@/components/chat/chat-history";
 import { useChatConversation } from "@/components/chat/use-chat";
 import { profileChatStore } from "@/lib/chat";
 import { useAiStatus } from "@/components/profile/ai-settings";
+import { useOnline } from "@/lib/online";
 import { cn } from "cn";
 
 const COMPOSER_ID = "profile-chat-composer";
@@ -39,8 +40,11 @@ export function TasteAssistant({ active }: { active: boolean }) {
   const [showHistory, setShowHistory] = useState(false);
   const { newConversation } = chat;
   const aiStatus = useAiStatus();
-  // Désactive l'input et le bouton envoyer si modèle non configuré ou en chargement.
-  const composerDisabled = !aiStatus?.configured || aiStatus.engine.state === "loading";
+  const online = useOnline();
+  // Zone de saisie inerte si le modèle n'est pas prêt ou si le réseau manque :
+  // l'assistant des goûts appelle le même LLM que le chat global.
+  const composerDisabled =
+    !online || !aiStatus?.configured || aiStatus.engine.state === "loading";
 
   // Fil neuf à chaque ouverture du Profil. `newConversation` est stable (mémoïsé
   // par le hook) : l'effet ne s'exécute donc qu'une fois, au montage.

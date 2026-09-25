@@ -277,14 +277,35 @@ def rename_playlist(playlist: str, name: str) -> str:
 
 
 def delete_playlist(playlist: str) -> str:
-    """Supprime une playlist."""
+    """Supprime une playlist, et les audios locaux qu'elle seule detient.
+
+    Meme regle que `remove_track` : un titre encore present dans une autre
+    playlist garde son fichier, sinon une suppression de playlist runnerait
+    l'ecoute hors ligne d'une liste voisine. Le reste part : c'est le geste
+    « je ne veux plus de ce disque ».
+    """
     found = _find(playlist)
     if found is None:
         return _not_found(playlist)
-    remaining = [p for p in _load_playlists() if p["id"] != found["id"]]
+    playlists = _load_playlists()
+    remaining = [p for p in playlists if p["id"] != found["id"]]
     _save_playlists(remaining)
-    return json.dumps({"status": "deleted", "id": found["id"], "name": found["name"]},
-                      ensure_ascii=False)
+
+    from services import preparation
+    encore_ailleurs = {
+        s.get("video_id")
+        for p in remaining
+        for s in p["songs"]
+    }
+    purges = 0
+    for song in found["songs"]:
+        vid = song.get("video_id")
+        if vid and vid not in encore_ailleurs and preparation.oublier(vid):
+            purges += 1
+    if purges:
+        _tprint(f"[playlist] « {found['name']} » supprimee, {purges} audio(s) local/aux effaces")
+    return json.dumps({"status": "deleted", "id": found["id"], "name": found["name"],
+                       "audios_supprimes": purges}, ensure_ascii=False)
 
 
 def add_track(playlist: str, video_id: str) -> str:
@@ -315,7 +336,14 @@ def add_track(playlist: str, video_id: str) -> str:
 
 
 def remove_track(playlist: str, video_id: str) -> str:
-    """Retire un titre d'une playlist."""
+    """Retire un titre d'une playlist, et son audio local s'il n'est plus nulle part.
+
+    Le fichier téléchargé ne part que si le titre disparaît de TOUTES les
+    playlists : il est partage, et le supprimer ici robberait une autre
+    playlist d'un titre qu'elle a encore. C'est la seule entree qui purge le
+    disque — la suppression d'une playlist entiere passe par le meme chemin
+    (`delete_playlist`), pour la meme raison.
+    """
     vid = (video_id or "").strip()
     playlists = _load_playlists()
     found = _find(playlist)
@@ -330,15 +358,39 @@ def remove_track(playlist: str, video_id: str) -> str:
             return json.dumps({"error": f"Titre '{vid}' absent de la playlist."},
                               ensure_ascii=False)
         entry["updated"] = _now()
+        # Le titre est-il encore claimé par une autre playlist ?
+        ailleurs = any(
+            s.get("video_id") == vid
+            for autre in playlists
+            if autre["id"] != entry["id"]
+            for s in autre["songs"]
+        )
         _save_playlists(playlists)
-        return json.dumps({"status": "removed", "playlist": entry}, ensure_ascii=False)
+        # Import tardif : `preparation` et `playlists` se référencent l'un
+        # l'autre (le transfert passe par les deux), pas de cycle à l'import.
+        from services import preparation
+        purge = False if ailleurs else preparation.oublier(vid)
+        if purge:
+            _tprint(f"[playlist] audio local efface pour {vid} "
+                    f"(plus aucune playlist ne le contient)")
+        return json.dumps({"status": "removed", "playlist": entry,
+                           "audio_supprime": purge}, ensure_ascii=False)
     return _not_found(playlist)
 
 
 # ------------------------------------------------------------------------ lecture
 
 def load_playlist(name: str, start: int = 0) -> str:
-    """Charge la playlist nommee et lance le titre a l'index `start` (file _PLAY_QUEUE)."""
+    """Joue la playlist nommee et enchaine ses titres suivants dans le flux infini.
+
+    La playlist alimente la file de STREAMING (et non une file parallele) : c'est
+    la boucle unique du moteur qui enchaine les titres, donc la fin d'un titre
+    passe au suivant au lieu de stopper net. Quand la playlist est epuisee, le
+    remplissage anticipatif prend le relais avec des recommandations.
+    """
+    from services import queue as play_queue
+    from services.streaming import _restart_loop
+
     global _PLAY_QUEUE, _PLAY_POS, _PLAY_NAME
     found = _find(name)
     if found is None:
@@ -360,6 +412,16 @@ def load_playlist(name: str, start: int = 0) -> str:
     res = json.loads(play_music(songs[index]["video_id"]))
     if res.get("status") != "playing":
         return json.dumps({"error": f"Echec lancement : {res.get('error', '?')}"}, ensure_ascii=False)
+    # La suite de la playlist devient la file du flux : la boucle l'enchaine
+    # titre apres titre. Le titre courant est deja dans l'historique de session
+    # (record_played), il ne figure donc pas dans la file a venir.
+    play_queue.queue_set_tracks(songs[index + 1:])
+    state.STREAMING_MODE = False
+    state.STREAMING_SKIP.set()
+    if state.STREAMING_THREAD is not None and state.STREAMING_THREAD.is_alive():
+        state.STREAMING_THREAD.join(timeout=3)
+    state.STREAMING_SKIP.clear()
+    _restart_loop(wait_current=True)
     return json.dumps({"status": "playing_playlist", "name": _PLAY_NAME,
                        "position": index + 1, "count": len(songs), "songs": songs},
                       ensure_ascii=False)

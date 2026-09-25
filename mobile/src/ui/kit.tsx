@@ -610,15 +610,26 @@ export function Feuille({
       // (styles.xml), qui n'a pas besoin d'edge-to-edge.
       statusBarTranslucent
     >
-      {/* Sur iOS la feuille est ancrée en bas : sans cette enveloppe, le
-          clavier la recouvre quand un champ prend le focus. Sur Android, c'est
-          le rétrécissement de la fenêtre du dialogue (ADJUST_RESIZE, posé par
-          React Native sur le Modal) qui la fait remonter — les événements
-          clavier de React Native viennent de la fenêtre de l'activité, pas de
-          celle de la modale. */}
+      {/* Clavier : la feuille doit remonter au-dessus de lui, sinon le champ
+          qui a le focus passe dessous (règle RN : KeyboardAvoidingView).
+
+          iOS  → `padding` : le clavier flotte par-dessus, on réserve sa place.
+          ANDROID → RIEN (`behavior={undefined}`). La fenêtre de la modale est
+          déjà en ADJUST_RESIZE (posé par React Native) : le clavier réduit
+          directement la fenêtre, et la feuille, ancrée en bas, remonte toute
+          seule. Un `behavior="height"` s'y SUPERPOSE, et comme il écrit la
+          hauteur du layout à chaque événement clavier pendant que l'animation
+          `slide` du Modal joue, les deux se marchent dessus : la feuille
+          tremble, le texte saute, et l'ouverture paraît saccadée. Ne rien faire
+          est ici plus rapide et plus net que de lutter contre le clavier.
+
+          `animationType="none"` + une `Animated` maison serait l'autre option,
+          mais elle coûte une valeur animée et un état de plus par feuille, pour
+          un résultat que le redimensionnement natif donne déjà. */}
       <KeyboardAvoidingView
         style={styles.feuillePorte}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={0}
       >
         <Pressable style={styles.scrim} onPress={onFermer} accessibilityLabel="Fermer" />
         <View style={[styles.feuille, { paddingBottom: Math.max(20, insets.bottom) }]}>

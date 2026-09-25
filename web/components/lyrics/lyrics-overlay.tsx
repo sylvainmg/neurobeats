@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Music4, RefreshCw, X } from "lucide-react";
+import { CloudOff, Music4, RefreshCw, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { TrackCover } from "@/components/track-cover";
 import { usePlayer } from "@/components/player/player-context";
 import { coverSizes } from "@/lib/track";
+import { useOnline } from "@/lib/online";
 import {
   SEEK_JUMP_SECONDS,
   estimateLineTimes,
@@ -111,6 +112,7 @@ export function LyricsOverlay({
   // Horloge coupée panneau fermé : rien à animer, la boucle rAF reprend au
   // premier tick après réouverture (resync depuis le dernier snapshot WS).
   const clock = usePlaybackClock(state?.position, paused, playing, open);
+  const online = useOnline();
   const { payload, payloadVideoId, status, error, retry } = useLyricsForTrack(
     videoId,
     title,
@@ -288,6 +290,19 @@ export function LyricsOverlay({
     if (!videoId) {
       return (
         <EmptyState title="Lance un titre pour voir les paroles" hint="Le panneau suit la lecture en direct." />
+      );
+    }
+    // Hors ligne : les paroles vivent sur lrclib/Genius, donc aucune source
+    // n'est joignable. On le dit avant de laisser une requête échouer, et sans
+    // proposer « Réessayer » — elle échouerait tout autant tant que le réseau
+    // manque. Le panneau se remettra seul au retour de la connexion.
+    if (!online) {
+      return (
+        <EmptyState
+          icon={<CloudOff className="text-white/40 size-10" />}
+          title="Paroles indisponibles hors ligne"
+          hint="Les paroles sont téléchargées depuis Internet. Elles réapparaîtront avec le réseau."
+        />
       );
     }
     if (status === "error") {

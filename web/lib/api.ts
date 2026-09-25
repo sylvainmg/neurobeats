@@ -158,6 +158,36 @@ export interface PlaylistSummary {
   contains?: boolean;
 }
 
+/**
+ * Ce que le poste garde sur son disque pour une playlist.
+ *
+ * « Sur cet appareil » est la seule garantie d'écoute hors ligne : un titre connu
+ * par son `video_id` mais sans fichier sur le disque dépend encore du réseau.
+ */
+export interface PlaylistLocalTrack {
+  video_id: string;
+  /** `pret` = fichier sur le disque ; `absent` = il reste à télécharger. */
+  etat: "pret" | "absent";
+  taille: number;
+  duree: number;
+  /** Format servi par le cache local (« m4a » ou « webm »). */
+  format: string;
+}
+
+export interface PlaylistLocal {
+  playlist: string;
+  playlist_id: string;
+  /** Nombre de titres de la playlist. */
+  titres: number;
+  /** Titres dont le fichier est sur le disque. */
+  pret: number;
+  /** Titres à télécharger. */
+  manquant: number;
+  /** Poids des fichiers présents, en octets. */
+  octets: number;
+  details: PlaylistLocalTrack[];
+}
+
 /** Titre de la page Découvrir. */
 export interface DiscoverTrack {
   video_id: string;
@@ -600,9 +630,20 @@ export const api = {
       { method: "DELETE" },
     ),
   playPlaylist: (id: string, start = 0) =>
-    post<{ status: string; name: string; position: number; count: number }>(
-      `/api/playlists/${encodeURIComponent(id)}/play`,
+    post<{ status: string; playlist: Playlist; position: number; count: number }>(
+      `/api/playlists/${id}/play`,
       { start },
+    ),
+
+  // Téléchargement local (bureau) : ce que le poste garde sur son disque.
+  /** État de téléchargement de chaque titre — lecture seule, ne lance rien. */
+  playlistLocal: (id: string) =>
+    apiFetch<PlaylistLocal>(`/api/playlists/${id}/local`),
+  /** Demande les titres manquants ; déjà téléchargés ne sont pas relancés. */
+  downloadPlaylistLocal: (id: string, videoIds: string[] = []) =>
+    post<{ status: string; playlist: string; demandes: number; deja_pret: number; echecs: number }>(
+      `/api/playlists/${id}/local/telecharger`,
+      { video_ids: videoIds },
     ),
 };
 

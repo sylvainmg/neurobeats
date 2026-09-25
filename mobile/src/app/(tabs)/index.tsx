@@ -69,7 +69,12 @@ export default function Bibliotheque() {
   const [recherche, setRecherche] = useState("");
   const [pret, setPret] = useState(false);
   const [nouvelleOuverte, setNouvelleOuverte] = useState(false);
-  /** La hauteur naturelle du bloc recherche, mesurée avant l'entrée en sélection. */
+  /**
+   * Hauteur du titre de section, mesurée avant l'entrée en sélection.
+   *
+   * C'est cette mesure que la liste reprend en montant : le champ de recherche
+   * reste en place au-dessus, seul ce bloc s'efface.
+   */
   const [hauteurRecherche, setHauteurRecherche] = useState(0);
   /** La hauteur du conteneur des playlists, mesurée avant l'entrée en sélection. */
   const [hauteurListe, setHauteurListe] = useState(0);
@@ -335,35 +340,46 @@ export default function Bibliotheque() {
     });
   };
 
+  // La recherche vit HORS de la liste, dans le flux de l'écran.
+  //
+  // Elle y était en `ListHeaderComponent`, ce qui la faisait monter et descendre
+  // avec le contenu : au premier caractère saisi, la liste passait des
+  // playlists aux résultats, son bloc d'en-tête changeait de hauteur, et le
+  // champ remontait sous le doigt — exactement le saut qu'on ne veut pas quand
+  // on est en train d'écrire. Ici il ne bouge plus jamais : seule la liste en
+  // dessous se substitue.
+  const champRecherche = (
+    <View style={styles.recherche}>
+      <IconSearch size={17} color={colors.ink2} />
+      <TextInput
+        value={recherche}
+        onChangeText={setRecherche}
+        placeholder="Rechercher un titre, un artiste"
+        placeholderTextColor={colors.ink3}
+        style={styles.champ}
+        accessibilityLabel="Rechercher un titre, un artiste"
+        returnKeyType="search"
+      />
+    </View>
+  );
+
+  // Le titre de section change seul (« Playlists » → « Résultats ») : c'est le
+  // seul élément qui a le droit de varier, l'input reste en place.
   const enTete = (
-    <View style={styles.bloc}>
-      <View style={styles.recherche}>
-        <IconSearch size={17} color={colors.ink2} />
-        <TextInput
-          value={recherche}
-          onChangeText={setRecherche}
-          placeholder="Rechercher un titre, un artiste"
-          placeholderTextColor={colors.ink3}
-          style={styles.champ}
-          accessibilityLabel="Rechercher un titre, un artiste"
-          returnKeyType="search"
-        />
-      </View>
-      <View style={styles.libelleLigne}>
-        <TitreSection texte={enRecherche ? "Résultats" : "Playlists"} style={styles.libelle} />
-        {!enRecherche ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Créer une nouvelle playlist"
-            onPress={() => setNouvelleOuverte(true)}
-            hitSlop={6}
-            style={({ pressed }) => [styles.creer, pressed && styles.creerPresse]}
-          >
-            <IconPlus size={15} color={colors.accent} />
-            <Text style={styles.creerTexte}>Nouvelle</Text>
-          </Pressable>
-        ) : null}
-      </View>
+    <View style={styles.libelleLigne}>
+      <TitreSection texte={enRecherche ? "Résultats" : "Playlists"} style={styles.libelle} />
+      {!enRecherche ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Créer une nouvelle playlist"
+          onPress={() => setNouvelleOuverte(true)}
+          hitSlop={6}
+          style={({ pressed }) => [styles.creer, pressed && styles.creerPresse]}
+        >
+          <IconPlus size={15} color={colors.accent} />
+          <Text style={styles.creerTexte}>Nouvelle</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 
@@ -449,6 +465,11 @@ export default function Bibliotheque() {
         </Animated.View>
       </View>
 
+      {/* Le champ de recherche est HORS des deux branches de liste, dans le flux
+          de l'écran : il ne peut donc pas être remonté ni redescendu quand la
+          liste change de contenu. Seule la zone en dessous se substitue. */}
+      <View style={styles.zoneRecherche}>{champRecherche}</View>
+
       {enRecherche ? (
         <FlatList
           data={trouvees}
@@ -478,11 +499,13 @@ export default function Bibliotheque() {
         />
       ) : (
         <>
-          {/* Le bloc recherche s'efface sur place quand la sélection entre.
+          {/* Le titre de section s'efface sur place quand la sélection entre.
               Le conteneur des playlists monte ensuite à sa place : un
               glissement (translateY natif) pendant que sa hauteur grandit de
-              la même mesure, pour que le bas reste ancré — aucun saut de
-              position, contrairement à une réorganisation de la colonne. */}
+              la même mesure, pour que le bas reste anclé — aucun saut de
+              position, contrairement à une réorganisation de la colonne.
+              Le champ de recherche reste au-dessus, intact : c'est lui qu'on
+              veut garder à portée de pouce pendant qu'on sélectionne. */}
           <Animated.View
             pointerEvents={enSelection ? "none" : "auto"}
             onLayout={(e) => {
@@ -492,9 +515,9 @@ export default function Bibliotheque() {
               opacity: avancee.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
             }}
           >
-            {/* L'en-tête vit même sans playlist : c'est lui qui porte la
-                recherche et le bouton « Nouvelle », et une bibliothèque vide
-                n'a pas moins besoin de créer une playlist qu'une autre. */}
+            {/* L'en-tête vit même sans playlist : c'est lui qui porte le bouton
+                « Nouvelle », et une bibliothèque vide n'a pas moins besoin de
+                créer une playlist qu'une autre. */}
             {enTete}
           </Animated.View>
           {/* La montée se joue sur deux vues imbriquées pour garder un seul
@@ -657,7 +680,11 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginHorizontal: space.sm,
   },
-  bloc: { paddingHorizontal: 18 },
+  // La zone du champ est un bloc à part entière : elle porte les marges
+  // latérales de l'écran, l'espace au-dessus du champ, et l'espace qui le sépare
+  // du titre de section. Cette separation est ce qui rend le champ IMMOBILE —
+  // il occupe toujours la même place, quelle que soit la liste du dessous.
+  zoneRecherche: { paddingHorizontal: 18, flexShrink: 0 },
   recherche: {
     flexDirection: "row",
     alignItems: "center",

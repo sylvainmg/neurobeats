@@ -10,6 +10,7 @@ import { ChatHistory } from "@/components/chat/chat-history";
 import { useChatConversation } from "@/components/chat/use-chat";
 import { globalChatStore } from "@/lib/chat";
 import { useAiStatus } from "@/components/profile/ai-settings";
+import { useOnline } from "@/lib/online";
 import { cn } from "cn";
 
 const COMPOSER_ID = "chat-composer";
@@ -19,8 +20,12 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
   const chat = useChatConversation(globalChatStore, "global");
   const [showHistory, setShowHistory] = useState(false);
   const aiStatus = useAiStatus();
-  // Désactive l'input et le bouton envoyer si modèle non configuré ou en chargement.
-  const composerDisabled = !aiStatus?.configured || aiStatus.engine.state === "loading";
+  const online = useOnline();
+  // Zone de saisie inerte si le modèle n'est pas prêt, ou si le réseau manque :
+  // le chat est le plus dépendant d'Internet de toute l'app (le LLM est distant
+  // pour tous les fournisseurs hors « modèle local téléchargé »).
+  const composerDisabled =
+    !online || !aiStatus?.configured || aiStatus.engine.state === "loading";
 
   // Focus du composer à l'ouverture (uniquement sur le fil, pas l'historique).
   useEffect(() => {

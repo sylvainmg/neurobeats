@@ -23,6 +23,7 @@ import {
   IconAvancer15,
   IconChevronLeft,
   IconNext,
+  IconParoles,
   IconPlay,
   IconPrevious,
   IconQueue,
@@ -32,6 +33,7 @@ import {
 } from "@/ui/icons";
 import { BarreDeProgression } from "@/ui/kit";
 import { FeuilleFile } from "@/ui/file";
+import { FeuilleParoles } from "@/ui/paroles";
 import { Vignette } from "@/ui/vignette";
 import { colors, ombre, radius, space, tabular, touch, type as typo } from "@/theme/tokens";
 
@@ -57,6 +59,8 @@ export default function Lecteur() {
   );
   // La feuille de la file d'attente : ouverte d'ici ou depuis l'en-tête.
   const [fileOuverte, setFileOuverte] = useState(false);
+  // Les paroles : même geste, même emplacement, à côté de la file.
+  const [parolesOuvertes, setParolesOuvertes] = useState(false);
   // Aperçu pendant le glissement : le seek n'a lieu qu'au relâchement, donc le
   // temps affiché suivrait la lecture réelle sans ce coût de « visé » local.
   const [apercu, setApercu] = useState<number | null>(null);
@@ -117,6 +121,14 @@ export default function Lecteur() {
         </Pressable>
         {piste ? (
           <View style={styles.enteteActions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Ouvrir les paroles"
+              onPress={() => setParolesOuvertes(true)}
+              style={({ pressed }) => [styles.retour, pressed && styles.retourPresse]}
+            >
+              <IconParoles size={24} color={colors.ink} />
+            </Pressable>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Ouvrir la file d'attente"
@@ -276,6 +288,7 @@ export default function Lecteur() {
       )}
 
       <FeuilleFile visible={fileOuverte} onFermer={() => setFileOuverte(false)} />
+      <FeuilleParoles visible={parolesOuvertes} onFermer={() => setParolesOuvertes(false)} />
     </View>
   );
 }

@@ -3,9 +3,10 @@ from fastapi import APIRouter
 
 from dependencies.responses import TIMEOUT_LONG, TIMEOUT_SHORT, run_tool, to_response
 from schemas.models import (
-    ApiResponse, PlaylistCreateRequest, PlaylistPatchRequest, PlaylistPlayRequest,
-    PlaylistTrackRequest,
+    ApiResponse, PlaylistCreateRequest, PlaylistLocalDownloadRequest,
+    PlaylistPatchRequest, PlaylistPlayRequest, PlaylistTrackRequest,
 )
+from services import localdownload
 from services.playlists import (
     add_track, create_empty_playlist, create_playlist, create_playlist_from,
     delete_playlist, get_playlist, list_playlists, load_playlist, playlist_next,
@@ -78,6 +79,31 @@ async def playlists_play(playlist_id: str, body: PlaylistPlayRequest):
     """Joue la playlist a partir de `start`."""
     code, res = await run_tool(load_playlist, timeout=TIMEOUT_LONG,
                                name=playlist_id, start=body.start)
+    return to_response(code, res)
+
+
+# ------------------------------------------------- telechargement local (bureau)
+
+@router.get("/playlists/{playlist_id}/local", response_model=ApiResponse)
+async def playlists_local(playlist_id: str):
+    """Ce que le poste garde sur son disque pour cette playlist.
+
+    Lecture seule : consulter une playlist ne lance aucun téléchargement. C'est
+    `POST /playlists/{id}/local/telecharger` qui demande les titres manquants.
+    """
+    code, res = await run_tool(localdownload.etats, playlist_id=playlist_id)
+    return to_response(code, res)
+
+
+@router.post("/playlists/{playlist_id}/local/telecharger", response_model=ApiResponse)
+async def playlists_local_download(playlist_id: str, body: PlaylistLocalDownloadRequest):
+    """Telecharge les titres manquants de la playlist pour une ecoute hors ligne.
+
+    Les titres deja sur le disque ne sont pas relances. `video_ids` vide ou
+    absent = toute la playlist.
+    """
+    code, res = await run_tool(localdownload.telecharger, playlist_id=playlist_id,
+                               video_ids=body.video_ids)
     return to_response(code, res)
 
 

@@ -250,23 +250,26 @@ export function ProfileView() {
   // l'ancien.
   const noticeSeq = useRef(0);
   // Ouverture directe sur un onglet (ex. Profil → IA depuis le bandeau du chat).
-  // Initialisation différée : pas de SSR (window absent) ni d'effet à setState.
-  const [tab, setTab] = useState<TabId>(() => {
-    if (typeof window === "undefined") return "identite";
-    const wanted = new URLSearchParams(window.location.search).get("tab");
-    return wanted && TABS.some((item) => item.id === wanted)
-      ? (wanted as TabId)
-      : "identite";
-  });
-  // L'onglet suit AUSSI les navigations suivantes : depuis cette page, le
-  // bandeau « Configurer » pointe sur `?tab=ia` — sans cette synchronisation le
-  // lien changeait l'URL sans rien afficher (le composant est déjà monté).
+  //
+  // L'onglet n'est PAS un état recopié depuis l'URL : c'est une DÉDUCTION.
+  // L'URL `?tab=…` sert de point de DÉPART — elle ouvre l'onglet demandé même
+  // si la page est déjà montée (le bandeau « Configurer » pointe vers
+  // `/profile?tab=ia`). Dès que l'utilisateur clique un onglet, son choix
+  // prend le dessus, et le paramètre d'URL ne le contrarie plus.
+  //
+  // L'inverse — un effet qui recopie l'URL dans un état — ferait le même
+  // travail en une passe de rendu de plus, et le linter a raison de le
+  // refuser : un rendu ne doit jamais écrire l'état qu'il vient de lire. C'est
+  // aussi ce qui rendait le clic manuel sans effet tant que `?tab=` restait
+  // dans la barre d'adresse.
+  const [choixManuel, setChoixManuel] = useState<TabId | null>(null);
   const urlTab = useSearchParams().get("tab");
-  useEffect(() => {
-    if (urlTab && TABS.some((item) => item.id === urlTab)) {
-      setTab(urlTab as TabId);
-    }
-  }, [urlTab]);
+  const ongletUrl: TabId | null =
+    urlTab && TABS.some((item) => item.id === urlTab) ? (urlTab as TabId) : null;
+  const tab: TabId = choixManuel ?? ongletUrl ?? "identite";
+  const setTab = useCallback((suivant: TabId) => {
+    setChoixManuel(suivant);
+  }, []);
 
   /** Confirmation ephemere : elle s'efface seule apres quelques secondes. */
   const showNotice = useCallback((text: string) => {
