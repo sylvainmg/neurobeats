@@ -1,0 +1,13 @@
+# Dépendances et build
+node_modules/
+dist/
+.runtime/
+
+# Logs et divers
+*.log
+.DS_Store
+
+# Binaires et artefacts prepares pour le packaging
+runtime/
+bin/
+release/

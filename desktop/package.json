@@ -1,0 +1,85 @@
+{
+  "name": "neurobeats-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NeuroBeats desktop — wrapper Electron (backend + frontend dans un conteneur)",
+  "desktopName": "NeuroBeats",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "icon": "node -e \"const fs=require('node:fs');fs.mkdirSync('build',{recursive:true});fs.copyFileSync('../web/assets/logo-mark.png','build/icon.png')\"",
+    "dev": "npm run build && electron . --dev",
+    "build": "npm run icon && npm run clean && tsc && npm run build:preload",
+    "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --format=cjs --target=chrome130 --external:electron --sourcemap --outfile=dist/preload/index.js",
+    "start": "npm run build && electron .",
+    "standalone": "bash scripts/sync-web.sh",
+    "fetch:llama": "bash scripts/fetch-llama.sh",
+    "stage": "bash scripts/stage-runtime.sh",
+    "package": "npm run build && npm run standalone && npm run stage && electron-builder --publish never",
+    "package:dir": "npm run build && npm run stage && electron-builder --dir --publish never"
+  },
+  "build": {
+    "appId": "com.neurobeats.desktop",
+    "productName": "NeuroBeats",
+    "asar": true,
+    "compression": "normal",
+    "npmRebuild": false,
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "extraResources": [
+      {
+        "from": ".runtime/web-standalone",
+        "to": "web",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": ".runtime/backend-package",
+        "to": "backend"
+      },
+      {
+        "from": "runtime",
+        "to": "runtime"
+      },
+      {
+        "from": "bin",
+        "to": "bin"
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "syncDesktopName": true,
+      "category": "AudioVideo",
+      "synopsis": "Streaming musical NeuroBeats",
+      "artifactName": "NeuroBeats-${version}-${arch}.${ext}"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.music"
+    },
+    "win": {
+      "target": "nsis"
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,21 @@
+# Runtime Python du conteneur desktop.
+# Sentence-Transformers/PyTorch restent Deliberement hors bundle : le backend
+# tombe sur TF-IDF si le package n'est pas present, ce qui evite un installateur
+# de plusieurs gigaoctets. Le modele GGUF local est servi par llama-server.
+#
+# Les versions suivent les memes majors que le venv de developpement (celui
+# contre lequel tous les tests sont ecrits) : un plafond plus bas livrait un
+# runtime non teste. Concretement, huggingface_hub 0.36 + hf-xet 1.6 bloque le
+# flux xet a un offset fixe (~6 Mo) sur les GGUF de plusieurs gigaoctets, alors
+# que la serie 1.x telecharge jusqu'a ~3 Mo/s.
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+websockets>=17,<18
+yt-dlp>=2025.1
+huggingface_hub>=1.32,<2
+openai>=3.19,<4
+anthropic>=1.8,<2
+ollama>=0.4,<1
+numpy>=1.26,<3
+scipy>=1.11,<2
+scikit-learn>=1.4,<2
