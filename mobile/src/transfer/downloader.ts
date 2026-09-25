@@ -31,7 +31,21 @@ import { YtDlp, YtDlpError, type DownloadResult } from "ytdlp-react-native";
 import * as module from "modules/downloader";
 import type { Spec, Suivi } from "modules/downloader";
 
-import { DOSSIER_TRANSFERT, assurerDossier, supprimerFichier, tailleDe } from "@/fichiers/dossiers";
+import {
+  DOSSIER_TRANSFERT,
+  assurerDossier,
+  ecrireTexteDocument,
+  fichierTransfert,
+  lireTexteDocument,
+  supprimerFichier,
+  tailleDe,
+} from "@/fichiers/dossiers";
+import {
+  FICHIER_DIRECTS_PERDUS,
+  fusionnerDirectPerdu,
+  retirerDirectPerdu,
+  type DirectPerdu,
+} from "@/transfer/directsPerdus";
 
 export type { Spec, Suivi };
 export type { EtatTelechargement } from "modules/downloader";
@@ -84,6 +98,34 @@ const EN_TETES_VIDEO: Record<string, string> = {
   Accept: "*/*",
   Referer: "https://www.youtube.com/",
 };
+
+/** Les traces de directs achevés restés à l'extérieur, depuis le fichier. */
+function lireDirectsPerdus(): DirectPerdu[] {
+  const brut = lireTexteDocument(FICHIER_DIRECTS_PERDUS);
+  if (!brut) return [];
+  try {
+    const parse = JSON.parse(brut);
+    return Array.isArray(parse) ? (parse as DirectPerdu[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Aide le prochain démarrage à retrouver un fichier achevé non rapatrié. */
+function memoriserDirectPerdu(entree: DirectPerdu) {
+  ecrireTexteDocument(
+    FICHIER_DIRECTS_PERDUS,
+    JSON.stringify(fusionnerDirectPerdu(lireDirectsPerdus(), entree)),
+  );
+}
+
+/** Le fichier est arrivé à bon port (ou l'on n'y croit plus) : trace effacée. */
+function oublierDirectPerdu(videoId: string) {
+  ecrireTexteDocument(
+    FICHIER_DIRECTS_PERDUS,
+    JSON.stringify(retirerDirectPerdu(lireDirectsPerdus(), videoId)),
+  );
+}
 
 export class Gestionnaire {
   private suivis = new Map<string, Suivi>();
@@ -234,7 +276,7 @@ export class Gestionnaire {
     }
     this.maj(spec.videoId, { etat: "en_cours" });
     assurerDossier(DOSSIER_TRANSFERT);
-    const cible = new File(DOSSIER_TRANSFERT, spec.fichier);
+    const cible = fichierTransfert(spec.fichier);
     // Une reprise continue la tâche en cours, elle ne repart pas d'un fichier
     // laissé là : ce qui traîne ici est un reliquat (application fermée en plein
     // transfert) et serait refusé comme destination déjà existante.
@@ -333,34 +375,135 @@ export class Gestionnaire {
    *
    * Le moteur nomme `%(id)s - %(title)s.%(ext)s` : la partie fixe (l'identifiant
    * vidéo) garantit l'unicité, y compris pour deux titres identiques.
+   *
+   * Si le rapatriement échoue — volume qui refuse le renommage, application
+   * fermée au mauvais moment — le fichier complet n'est pas perdu pour autant :
+   * on garde sa trace et on le réclame au prochain démarrage (voir
+   * `recupererLesDirects`). L'utilisateur n'a pas à tout retélécharger.
    */
   private async accueillirFichier(spec: Spec, resultat: DownloadResult) {
     try {
-      // Le moteur a annoncé la fin sans écrire de fichier (reliquat sur la
-      // destination, annulation au dernier moment) : un chemin vide ne fait
-      // rien de propre, autant le dire aussitôt.
-      const chemin = resultat.uri ?? resultat.path ?? "";
-      if (!chemin) {
+      assurerDossier(DOSSIER_TRANSFERT);
+      // Le moteur annonce tantôt une URI encodée (`Uri.fromFile`), tantôt un
+      // chemin brut selon la version du module : on essaie les deux.
+      const source = this.trouverSourceDirecte(resultat.uri, resultat.path);
+      if (!source) {
         throw new Error("Le fichier téléchargé est introuvable.");
       }
-      assurerDossier(DOSSIER_TRANSFERT);
-      const source = new File(chemin);
-      if (!source.exists) throw new Error("Le fichier téléchargé est introuvable.");
-      const destination = new File(DOSSIER_TRANSFERT, resultat.filename ?? spec.fichier);
-      supprimerFichier(destination);
-      await source.move(destination);
-      const taille = tailleDe(destination) || resultat.size || 0;
-      this.maj(spec.videoId, {
-        etat: "termine",
-        recus: taille,
-        total: taille,
-        uri: destination.uri,
-      });
+      const destination = fichierTransfert(resultat.filename ?? spec.fichier);
+      await this.rapatrier(source, destination);
+      this.acheverDirect(spec.videoId, destination, resultat.size);
+      oublierDirectPerdu(spec.videoId);
     } catch (erreur) {
-      // Le binaire a terminé mais le rapatriement a échoué : c'est un échec de
-      // chargement à porter comme tel, le fichier ne peut pas manquer à l'arrivée.
+      // Un fichier achevé resté dehors est récupérable : on mémorise ses
+      // chemins pour le rapatrier à la reprise plutôt que de le retélécharger.
+      const chemin = resultat.uri ?? resultat.path;
+      if (chemin) {
+        memoriserDirectPerdu({
+          videoId: spec.videoId,
+          source: chemin,
+          rechange:
+            resultat.path && resultat.path !== chemin ? resultat.path : undefined,
+          fichier: resultat.filename ?? spec.fichier,
+          taille: resultat.size,
+        });
+      }
       this.echouerTransfert(spec, erreur);
     }
+  }
+
+  /**
+   * Le premier des chemins donnés qui pointe vraiment sur un fichier non vide.
+   *
+   * Un chemin invalide (URL mal formée, fichier jamais écrit) n'est pas une
+   * source : on passe au suivant sans casser le rapatriement.
+   */
+  private trouverSourceDirecte(...chemins: (string | undefined)[]): File | null {
+    for (const chemin of chemins) {
+      if (!chemin) continue;
+      try {
+        const candidat = new File(chemin);
+        if (candidat.exists && tailleDe(candidat) > 0) return candidat;
+      } catch {
+        // un chemin illisible n'est simplement pas une source
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Déplace un fichier dans la bibliothèque sans dépendre d'un renommage entre
+   * volumes (le dossier de travail de yt-dlp est externe, la bibliothèque
+   * interne) : si le déplacement échoue, on copie puis on efface la source.
+   */
+  private async rapatrier(source: File, destination: File) {
+    supprimerFichier(destination);
+    try {
+      await source.move(destination);
+    } catch {
+      await source.copy(destination);
+      supprimerFichier(source);
+    }
+    if (!destination.exists || tailleDe(destination) <= 0) {
+      throw new Error("Le fichier n'a pas pu être rangé dans la bibliothèque.");
+    }
+  }
+
+  /** Déclare livré un direct rapatrié, en créant sa ligne si elle manque. */
+  private acheverDirect(videoId: string, destination: File, tailleConnue?: number) {
+    const taille = tailleDe(destination) || tailleConnue || 0;
+    if (this.suivis.has(videoId)) {
+      this.maj(videoId, { etat: "termine", recus: taille, total: taille, uri: destination.uri });
+      return;
+    }
+    this.suivis.set(videoId, {
+      videoId,
+      etat: "termine",
+      recus: taille,
+      total: taille,
+      uri: destination.uri,
+    });
+    this.publier();
+  }
+
+  /**
+   * Rapatrie au démarrage les directs achevés restés dans le dossier de yt-dlp.
+   *
+   * Le binaire a pu finir le fichier alors que notre rapatriement n'a pas eu
+   * lieu (application fermée entre les deux, ou volume refusant le renommage) :
+   * la trace mémorisée par `accueillirFichier` permet de le retrouver tel quel
+   * et de le ranger, sans retélécharger. Une trace sans fichier (binaire jamais
+   * arrivé au bout) attend simplement son tour.
+   */
+  async recupererLesDirects() {
+    for (const entree of lireDirectsPerdus()) {
+      if (this.annulations.has(entree.videoId)) continue;
+      try {
+        assurerDossier(DOSSIER_TRANSFERT);
+        const destination = fichierTransfert(entree.fichier);
+        // Déjà à bon port par un essai précédent (trace restée après coup) :
+        // on dit seulement la fin, et l'on efface une éventuelle doublure.
+        if (tailleDe(destination) > 0) {
+          const doublure = this.trouverSourceDirecte(entree.source, entree.rechange);
+          if (doublure) supprimerFichier(doublure);
+          this.acheverDirect(entree.videoId, destination, entree.taille);
+          oublierDirectPerdu(entree.videoId);
+          continue;
+        }
+        const source = this.trouverSourceDirecte(entree.source, entree.rechange);
+        if (!source) continue; // pas encore de fichier complet : on garde la trace
+        await this.rapatrier(source, destination);
+        this.acheverDirect(entree.videoId, destination, entree.taille);
+        oublierDirectPerdu(entree.videoId);
+        console.warn(`[transfert] récupéré ${entree.videoId} depuis le dossier yt-dlp`);
+      } catch (erreur) {
+        const message = erreur instanceof Error ? erreur.message : "Échec du téléchargement";
+        console.warn(`[transfert] récupération impossible ${entree.videoId} : ${message}`);
+      }
+    }
+    // Une ligne re-crée au démarrage n'a pas de spec : la même résolution que
+    // les transferts natifs retrouve son titre en base.
+    await this.resoudreLesTitresManquants();
   }
 
   /** Pose un échec sur le suivi, après l'avoir loggé pour logcat. */
@@ -443,10 +586,23 @@ export class Gestionnaire {
       // Une ligne arrêtée par l'utilisateur ne renaît pas du seul fait que le
       // système la revoit : ce serait annuler puis voir le titre repartir.
       if (this.annulations.has(etat.videoId)) continue;
-      this.suivis.set(etat.videoId, etat);
+      // Livrée = téléchargée ET publiée dans la bibliothèque publique. Une
+      // ligne que le système dit terminée sans URI `content://` (publication
+      // MediaStore en attente, ou reliquat de l'ancien repli file://) n'est
+      // pas un titre jouable partout : on la montre « en cours », jamais reçu.
+      const livree =
+        etat.etat === "termine" && !!etat.uri && etat.uri.startsWith("content://");
+      const lu: Suivi = livree
+        ? etat
+        : {
+            ...etat,
+            etat: "en_cours",
+            raison: etat.raison ?? "Publication dans la bibliothèque en attente…",
+          };
+      this.suivis.set(etat.videoId, lu);
       // Une ligne arrivée à bon port lave les compteurs de relance. Une ligne
       // annulée par l'utilisateur, elle, reste en paix (see annulations).
-      if (etat.etat === "termine") this.relances.delete(etat.videoId);
+      if (lu.etat === "termine") this.relances.delete(etat.videoId);
     }
     await this.resoudreLesTitresManquants();
     this.publier();
@@ -568,6 +724,10 @@ export class Gestionnaire {
 
   /** Reprend le suivi quand l'application revient au premier plan. */
   demarrerLeSuivi(): () => void {
+    // Un direct achevé avant la fermeture de l'application attend peut-être
+    // encore dans le dossier de yt-dlp : on le réclame dès la reprise, avant
+    // même le premier tour de la boucle.
+    void this.recupererLesDirects();
     let actif = true;
     // Une interrogation lente (DownloadManager sous charge) ne doit jamais
     // s'empiler : `setInterval` relançait `rafraichir` même quand le tour
@@ -596,7 +756,7 @@ export class Gestionnaire {
   private supprimerPartiel(videoId: string) {
     const spec = this.specs.get(videoId);
     if (!spec) return;
-    supprimerFichier(new File(DOSSIER_TRANSFERT, spec.fichier));
+    supprimerFichier(fichierTransfert(spec.fichier));
   }
 
   private maj(videoId: string, partiel: Partial<Suivi>) {

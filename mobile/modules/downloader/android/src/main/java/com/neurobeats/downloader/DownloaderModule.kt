@@ -47,6 +47,10 @@ class DownloaderModule : Module() {
 
     internal val suivi = mutableMapOf<Long, Spec>()
     private var receveur: BroadcastReceiver? = null
+    // Espace les re-essais de publication MediaStore : re-copier un gros
+    // fichier a chaque balayage de 700 ms serait ruineux si le systeme refuse
+    // longtemps. Non persiste : un redemarrage repart sur un essai immediat.
+    private val prochainEssaiPublication = mutableMapOf<Long, Long>()
 
     private val gestionnaire: DownloadManager?
         get() = appContext.reactContext
@@ -149,22 +153,43 @@ class DownloaderModule : Module() {
             val contexte = appContext.reactContext ?: return@AsyncFunction "[]"
             val dm = gestionnaire ?: return@AsyncFunction "[]"
             val sortie = JSONArray()
-            val termines = mutableListOf<Long>()
             for ((id, spec) in suivi) {
                 val mesure = mesurer(dm, id, spec)
                 val ligne = JSONObject()
                 ligne.put("videoId", spec.videoId)
                 ligne.put("total", mesure.total)
-                ligne.put("etat", mesure.etat)
                 ligne.put("recus", mesure.recus)
+                var etat = mesure.etat
                 if (mesure.raison.isNotEmpty()) ligne.put("raison", mesure.raison)
                 if (mesure.etat == "termine") {
-                    ligne.put("uri", spec.uri ?: "")
-                    if (spec.uri == null) termines.add(id)
+                    // DownloadManager dit seulement « fichier compte » ; c'est la
+                    // publication MediaStore qui rend le titre jouable. Elle se
+                    // decide ici, ligne par ligne, a chaque balayage.
+                    when (spec.uri) {
+                        null -> when (terminer(contexte, id)) {
+                            "publie" -> ligne.put("uri", suivi[id]?.uri ?: "")
+                            "perdu" -> {
+                                // Le fichier a disparu apres un succes du systeme
+                                // (nettoyage du stockage, purge) : rien a publier
+                                // ni relire. La ligne dit l'echec, l'auto-relance
+                                // recapitule la demande proprement.
+                                etat = "echoue"
+                                ligne.put(
+                                    "raison",
+                                    "Fichier introuvable après le téléchargement. Relance-le."
+                                )
+                            }
+                            else -> ligne.put(
+                                "raison",
+                                "Téléchargé, publication dans la bibliothèque en attente…"
+                            )
+                        }
+                        else -> ligne.put("uri", spec.uri)
+                    }
                 }
+                ligne.put("etat", etat)
                 sortie.put(ligne)
             }
-            for (id in termines) terminer(contexte, id)
             publierNotifications(contexte)
             sortie.toString()
         }
@@ -369,28 +394,43 @@ class DownloaderModule : Module() {
         }
     }
 
-    /** Le transfert est fini : on publie le fichier et on retient son URI. */
-    private fun terminer(contexte: Context, id: Long) {
-        val spec = suivi[id] ?: return
+    /**
+     * Acheve un titre que DownloadManager dit « termine » : publication dans la
+     * bibliotheque publique, seule vraie preuve de possession.
+     *
+     * Trois issues : « publie » (l'URI content:// est posee), « attente » (le
+     * fichier est la mais MediaStore a refuse — on re-essaiera, espaces de 30 s
+     * pour ne pas recopier un gros fichier a chaque balayage), « perdu » (le
+     * fichier a disparu, la demande est retiree pour qu'une relance reparte du
+     * neuf). Jamais de repli vers une URI privee file:// : invisible du lecteur
+     * Musique du telephone, un rescan croirait le titre deja la.
+     */
+    private fun terminer(contexte: Context, id: Long): String {
+        val spec = suivi[id] ?: return "attente"
         val fichier = File(MediaStoreWriter.dossierPrive(contexte), spec.fichier)
-        val uri = MediaStoreWriter.publier(
-            contexte, fichier, spec.titre, spec.chaine, spec.album
-        )
+        // Un essai de publication a chaque balayage (700 ms) re-copierait un
+        // gros fichier entier a chaque fois que MediaStore refuse : on espace
+        // les tentatives (voir plus bas) et on respecte cet espacement.
+        val maintenant = System.currentTimeMillis()
+        if (maintenant < prochainEssaiPublication.getOrDefault(id, 0L)) return "attente"
+        val uri = MediaStoreWriter.publier(contexte, fichier, spec.titre, spec.chaine, spec.album)
         if (uri != null) {
+            prochainEssaiPublication.remove(id)
             suivi[id] = spec.copy(uri = uri)
-        } else if (fichier.exists() && fichier.length() > 0L) {
-            // Publication impossible mais le fichier est bien la : l'URI privee
-            // suffit a la lecture. Faux et signale, ce n'est plus l'application
-            // qui decide — le fichier reel fait foi.
-            suivi[id] = spec.copy(uri = Uri.fromFile(fichier).toString())
-        } else {
-            // Ni publie ni present : pretendre posseder ce titre serait un
-            // mensonge — l'ecran le dirait recu alors que rien ne se lit. Le
-            // titre reste donc « a transferer » pour une prochaine tentative.
-            suivi[id] = spec.copy(uri = null)
+            sauver(contexte)
+            publierNotifications(contexte)
+            return "publie"
         }
-        sauver(contexte)
-        publierNotifications(contexte)
+        if (!fichier.exists() || fichier.length() == 0L) {
+            // Success du systeme mais fichier absent (nettoyage, purge) :
+            // retirer la demande fait dire « echoue » au prochain balayage
+            // (ligne sans le systeme), ce qui declenche l'auto-relance.
+            prochainEssaiPublication.remove(id)
+            gestionnaire?.remove(id)
+            return "perdu"
+        }
+        prochainEssaiPublication[id] = maintenant + 30_000L
+        return "attente"
     }
 
     /** L'etat d'une demande tel que le gestionnaire du systeme le rapporte. */
@@ -404,7 +444,12 @@ class DownloaderModule : Module() {
     private fun mesurer(dm: DownloadManager, id: Long, spec: Spec): EtatLu {
         var etat = "en_cours"
         var recus = 0L
-        var total = spec.taille
+        // Pas d'estimation du manifeste en attendant la vraie taille :
+        // une `spec.taille` trop petite affichait « 100 % » des le debut, puis
+        // la barre « retombait » quand le systeme annonçait la taille reelle.
+        // 0 tant que DownloadManager n'a rien dit : l'ecran montre l'avancement
+        // sans pourcentage plutot qu'un chiffre menteur.
+        var total = 0L
         var raison = ""
         try {
             val curseur: Cursor? = try {
@@ -436,7 +481,7 @@ class DownloaderModule : Module() {
                         // Une demande qui attend a une raison, et le systeme la
                         // connait : sans elle, l'ecran affiche « en attente » et
                         // l'utilisateur croit que rien ne se passe.
-                        raison = attenteHumaine(code)
+                        raison = attenteHumaine(statut, code)
                     }
                 } else {
                     // La ligne du systeme a disparu sans nous le dire (purge,
@@ -634,11 +679,32 @@ class DownloaderModule : Module() {
             .edit().putString(CLE_VISIBLES, objet.toString()).apply()
     }
 
-    /** Pourquoi une demande attend encore : le systeme le dit, on le repete. */
-    private fun attenteHumaine(code: Int): String = when (code) {
-        DownloadManager.PAUSED_QUEUED_FOR_WIFI -> "en attente du Wi-Fi"
-        DownloadManager.PAUSED_WAITING_FOR_NETWORK -> "en attente du reseau"
-        DownloadManager.PAUSED_WAITING_TO_RETRY -> "nouvelle tentative en cours"
+    /**
+     * Pourquoi une demande attend encore : le systeme le dit, on le repete.
+     *
+     * L'interpretation de COLUMN_REASON depend de l'etat. En pause (PAUSED),
+     * les raisons decrivent une demande arretee ; en file (PENDING), une
+     * demande qui n'a pas encore demarre. Les deux series de constantes
+     * partagent les valeurs 1 a 3 mais pas les memes sens : melanger les deux
+     * afficherait « en attente du Wi-Fi » a une simple file qui s'ouvre —
+     * l'ecran de transfert crierait a tort au reseau a chaque debut de lot.
+     */
+    private fun attenteHumaine(statut: Int, code: Int): String = when (statut) {
+        DownloadManager.STATUS_PAUSED -> when (code) {
+            DownloadManager.PAUSED_QUEUED_FOR_WIFI -> "en attente du Wi-Fi"
+            DownloadManager.PAUSED_WAITING_FOR_NETWORK -> "en attente du réseau"
+            DownloadManager.PAUSED_WAITING_TO_RETRY -> "nouvelle tentative en cours"
+            else -> ""
+        }
+        // Les constantes DOWNLOAD_WAITING_* d'AOSP (1 a 3) sont masquees de
+        // l'API publique : on reprend leurs valeurs, stables sur toutes les
+        // versions. 1 (WAITING_TO_RUN) = la file s'ouvre, la demande va
+        // demarrer : rien a annoncer, surtout pas une attente du Wi-Fi.
+        DownloadManager.STATUS_PENDING -> when (code) {
+            2 -> "en attente du réseau"
+            3 -> "nouvelle tentative en cours"
+            else -> ""
+        }
         else -> ""
     }
 

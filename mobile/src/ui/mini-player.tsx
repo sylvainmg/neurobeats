@@ -13,7 +13,16 @@
  * doit pas rester cliquable.
  */
 import { useEffect, useMemo } from "react";
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Animated,
+  Dimensions,
+  Easing,
+  PanResponder,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import * as lecteur from "@/playback/lecteur";
@@ -26,6 +35,8 @@ import { colors, ease, ombre, radius, space } from "@/theme/tokens";
 
 const COURBE = Easing.bezier(ease[0], ease[1], ease[2], ease[3]);
 const DUREE = 220;
+/** Part de la largeur à franchir pour que le balayage emporte la carte. */
+const SEUIL_SORTIE = 1 / 3;
 
 export function MiniLecteur({
   onOuvrir,
@@ -53,9 +64,62 @@ export function MiniLecteur({
   const visible = piste !== null;
   const titre = piste ?? derniere;
 
+  /**
+   * Balayage horizontal : la carte suit le doigt, et part avec la lecture.
+   *
+   * Horizontal parce que l'entrée et la sortie de la carte sont verticales :
+   * deux gestes opposés ne se disputent pas la même direction. Passé un tiers de
+   * l'écran, la carte achève sa course du côté du geste puis s'arrête là — c'est
+   * la file vidée qui la fait redescendre, par l'animation de sortie habituelle.
+   */
+  const [glissement, balayage] = useMemo(() => {
+    const valeur = new Animated.Value(0);
+    const pan = PanResponder.create({
+      onMoveShouldSetPanResponder: (_evenement, geste) =>
+        Math.abs(geste.dx) > 10 && Math.abs(geste.dx) > Math.abs(geste.dy),
+      onPanResponderMove: (_evenement, geste) => valeur.setValue(geste.dx),
+      onPanResponderRelease: (_evenement, geste) => {
+        const largeur = Dimensions.get("window").width;
+        if (Math.abs(geste.dx) < largeur * SEUIL_SORTIE) {
+          if (!anime) {
+            valeur.setValue(0);
+            return;
+          }
+          Animated.spring(valeur, {
+            toValue: 0,
+            useNativeDriver: true,
+            bounciness: 0,
+          }).start();
+          return;
+        }
+        if (!anime) {
+          // Sans animation, la carte s'efface d'un coup : la recentrer n'a
+          // aucun effet visible.
+          valeur.setValue(0);
+          lecteur.arreter();
+          return;
+        }
+        Animated.timing(valeur, {
+          toValue: Math.sign(geste.dx) * largeur,
+          duration: 180,
+          easing: COURBE,
+          useNativeDriver: true,
+        }).start(({ finished }) => {
+          // La carte est hors de l'écran : on arrête la lecture. La remise à
+          // zéro du décalage attend la fin de la sortie (voir l'effet plus
+          // bas) — la faire ici ramènerait la carte au centre juste avant sa
+          // descente, ce qui se voit comme une réapparition parasite.
+          if (finished) lecteur.arreter();
+        });
+      },
+    });
+    return [valeur, pan];
+  }, [anime]);
+
   useEffect(() => {
     if (!anime) {
       avancement.setValue(visible ? 1 : 0);
+      glissement.setValue(0);
       return;
     }
     Animated.timing(avancement, {
@@ -63,8 +127,13 @@ export function MiniLecteur({
       duration: DUREE,
       easing: COURBE,
       useNativeDriver: true,
-    }).start();
-  }, [visible, avancement, anime]);
+    }).start(({ finished }) => {
+      // Sortie terminée : la carte est hors de l'écran (sous la barre), c'est le
+      // seul moment où remettre le balayage à zéro ne se voit pas. La prochaine
+      // lecture rentre ainsi du bas, centrée.
+      if (finished && !visible) glissement.setValue(0);
+    });
+  }, [visible, avancement, glissement, anime]);
 
   // Rien n'a encore été joué : il n'y a pas de carte à faire sortir.
   if (!titre) return null;
@@ -76,12 +145,14 @@ export function MiniLecteur({
 
   return (
     <Animated.View
+      {...balayage.panHandlers}
       style={[
         styles.porte,
         {
           bottom: bas,
           opacity: avancement,
           transform: [
+            { translateX: glissement },
             {
               translateY: avancement.interpolate({
                 inputRange: [0, 1],

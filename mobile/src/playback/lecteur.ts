@@ -31,7 +31,7 @@
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from "expo-audio";
 import { File } from "expo-file-system";
 
-import { marquerEcoute, oublierPiste } from "@/db/repos";
+import { marquerEcoute, oublierLigne, pistesParFichier } from "@/db/repos";
 import {
   apresDernier,
   bornerCible,
@@ -170,7 +170,11 @@ async function charger(rangVoulu: number, jouerApres = true): Promise<boolean> {
   const magasin = useLecture.getState();
 
   if (!fichierPresent(piste)) {
-    await oublierPiste(piste.id);
+    // Le fichier manque : toutes les occurrences qui le partageaient (le même
+    // titre dans d'autres playlists) retombent à « à transférer » avec lui.
+    for (const ligne of await pistesParFichier(piste.fichier)) {
+      await oublierLigne(ligne.id);
+    }
     magasin.majProbleme(
       `« ${piste.titre} » n'est pas sur le téléphone. Transfère sa playlist depuis l'ordinateur pour l'écouter.`,
     );
@@ -349,6 +353,31 @@ export function basculerBoucle() {
   const magasin = useLecture.getState();
   magasin.majBoucle(modeBoucleSuivant(magasin.boucle));
   appliquerBoucleTitre();
+}
+
+/**
+ * Arrête la lecture et referme le mini-lecteur.
+ *
+ * C'est le geste du balayage : la carte s'en va, la musique avec elle. On coupe
+ * le son avant de vider la file — une file vidée pendant que le lecteur joue
+ * laisserait le titre continuer sans que rien ne le commande — et l'on rend la
+ * session à la notification, sinon la prochaine lecture n'y apparaîtrait plus.
+ */
+export function arreter() {
+  try {
+    lecteur?.pause();
+    if (telecommandeActivee) {
+      lecteur?.setActiveForLockScreen(false);
+      telecommandeActivee = false;
+    }
+  } catch {
+    // Un lecteur déjà éteint n'empêche pas de vider la file.
+  }
+  file = [];
+  fileOriginale = [];
+  rang = 0;
+  pret = false;
+  useLecture.getState().vider();
 }
 
 export async function basculer() {

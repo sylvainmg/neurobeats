@@ -1,11 +1,11 @@
 /**
- * Bibliothèque : la promesse chiffrée, puis les playlists.
+ * Bibliothèque : la recherche, puis les playlists.
  *
  * La maquette range les titres sous des libellés ; ici les playlists sont la
  * structure, et les titres ne s'affichent que dans une playlist — leur vue. Ce
- * qui reste de la maquette, c'est son registre : une bande qui chiffre la
- * possession, une recherche en pilule, des lignes séparées par des hairlines,
- * une pastille d'état à droite, et le scan en bouton flottant.
+ * qui reste de la maquette, c'est son registre : une recherche en pilule, des
+ * lignes séparées par des hairlines, une pastille d'état à droite, et le scan
+ * en bouton flottant.
  *
  * Deux exceptions à « les titres vivent dans leur playlist », parce qu'elles
  * répondent à une demande explicite : la recherche les montre, et un appui long
@@ -35,18 +35,20 @@ import type { Piste, Playlist } from "@/db/repos";
 import { retirerDuTelephone, retirerPlaylists } from "@/library/effacement";
 import { resumeDePlaylist, SANS_PLAYLIST, type ResumePlaylist } from "@/library/playlists";
 import { pluraliser } from "@/transfer/format";
-import { jouer } from "@/playback/lecteur";
-import { useLecture } from "@/playback/store";
+import { jouer, jouerAleatoirement } from "@/playback/lecteur";
+import { useLecture, type PisteLecture } from "@/playback/store";
 import { useApp } from "@/state/app";
 import { BoutonFlottant } from "@/ui/fab";
 import {
+  IconAleatoire,
   IconClose,
   IconCloudDown,
+  IconPlay,
   IconPlus,
   IconSearch,
   IconTrash,
 } from "@/ui/icons";
-import { EcranVide, COURBE, EnTeteEcran, Suivi, TitreSection } from "@/ui/kit";
+import { EcranVide, COURBE, EnTeteEcran, TitreSection } from "@/ui/kit";
 import { useDialogue } from "@/ui/dialog";
 import { FeuilleNouvellePlaylist } from "@/ui/feuille-playlist";
 import { LignePlaylist } from "@/ui/playlist-row";
@@ -130,11 +132,16 @@ export default function Bibliotheque() {
     useCallback(() => {
       let actif = true;
       void (async () => {
-        // « Chez toi » doit vouloir dire « je peux l'écouter » : on retire de la
-        // possession les titres dont le fichier a disparu avant de compter.
-        await useApp.getState().verifierTitres();
-        if (!actif) return;
+        // Peinture immédiate : ce qu'annonce la base s'affiche sans attendre le
+        // scan des fichiers (stat de chaque titre — le geste lent du retour sur
+        // l'écran après un lot). « Chez toi » surcompte un instant si un fichier
+        // a disparu ; la vérification en arrière-plan corrige dès qu'elle rend
+        // son verdict, et on relit alors pour effacer les titres fantômes.
         await recharger();
+        if (!actif) return;
+        const disparus = await useApp.getState().verifierTitres();
+        if (!actif) return;
+        if (disparus > 0) await recharger();
       })();
       return () => {
         actif = false;
@@ -232,6 +239,54 @@ export default function Bibliotheque() {
     router.push("/player");
   };
 
+  /**
+   * La file de toute la bibliothèque : chaque playlist dans l'ordre de
+   * l'écran, ses titres dans leur ordre, seulement ceux déjà sur le
+   * téléphone. C'est la même file que lancerait chaque playlist à la suite —
+   * un seul appel au lecteur, pas d'assemblage spécial.
+   *
+   * « Sans playlist » en fait partie : c'est une ligne de l'écran comme une
+   * autre, et sa musique est de la musique possédée. L'oublier rendait les
+   * boutons menteurs — affichés au compte des titres sur le téléphone, mais
+   * sans rien à jouer quand tous vivaient là.
+   */
+  const fileDeTouteLaBibliotheque = useCallback(async (): Promise<PisteLecture[]> => {
+    const rangees = await Promise.all(
+      [...playlists.map((playlist) => playlist.playlist_id), null].map((identifiant) =>
+        repo.listerPistesParPlaylist(identifiant),
+      ),
+    );
+    return rangees
+      .flat()
+      .filter((piste) => piste.etat === "chez_toi")
+      .map((piste) => ({
+        id: piste.video_id,
+        titre: piste.titre,
+        chaine: piste.chaine,
+        album: piste.album,
+        fichier: piste.fichier ?? "",
+        pochette: piste.pochette,
+        duree: piste.duree,
+      }));
+  }, [playlists]);
+
+  /** Lecture unifiée : toute la bibliothèque dans l'ordre, ou en aléatoire. */
+  const jouerTout = async (aleatoire: boolean) => {
+    const file = await fileDeTouteLaBibliotheque();
+    if (file.length === 0) {
+      ouvrirDialogue({
+        titre: "Rien à écouter",
+        message:
+          "Aucun titre n'est encore sur le téléphone. Transfère une playlist depuis ton ordinateur pour l'écouter.",
+        icone: <IconCloudDown size={26} color="#04121f" />,
+      });
+      return;
+    }
+    if (aleatoire) await jouerAleatoirement(file, 0);
+    else await jouer(file, 0);
+    router.push("/player");
+  };
+
   const retirer = (piste: Piste) => {
     ouvrirDialogue({
       ton: "danger",
@@ -282,12 +337,6 @@ export default function Bibliotheque() {
 
   const enTete = (
     <View style={styles.bloc}>
-      <Suivi
-        valeur={pluraliser(bilan.chez_toi, "titre")}
-        legende="disponibles sans réseau"
-        fraction={bilan.titres > 0 ? bilan.chez_toi / bilan.titres : 0}
-        style={styles.suivi}
-      />
       <View style={styles.recherche}>
         <IconSearch size={17} color={colors.ink2} />
         <TextInput
@@ -329,7 +378,42 @@ export default function Bibliotheque() {
           pointerEvents={enSelection ? "none" : "auto"}
           style={{ opacity: avancee.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) }}
         >
-          <EnTeteEcran titre="Bibliothèque" meta={pluraliser(bilan.titres, "titre")} />
+          <EnTeteEcran
+            titre="Bibliothèque"
+            meta={
+              bilan.titres > 0 && bilan.chez_toi === 0
+                ? pluraliser(bilan.titres, "titre")
+                : undefined
+            }
+            action={
+              // Les deux commandes n'existent que s'il y a quelque chose à
+              // jouer : un bouton qui ne peut rien lancer est un mensonge
+              // cliquable. « Chez toi » compte exactement les titres que la
+              // file emporte, donc les deux s'accordent toujours.
+              bilan.chez_toi > 0 ? (
+                <View style={styles.lecture}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Tout lire"
+                    onPress={() => void jouerTout(false)}
+                    style={({ pressed }) => [styles.pillLecture, pressed && styles.pillLecturePresse]}
+                  >
+                    <IconPlay size={15} color={colors.accent} rempli />
+                    <Text style={styles.pillLectureTexte}>Tout lire</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Lecture aléatoire"
+                    onPress={() => void jouerTout(true)}
+                    style={({ pressed }) => [styles.pillLecture, pressed && styles.pillLecturePresse]}
+                  >
+                    <IconAleatoire size={15} color={colors.accent} />
+                    <Text style={styles.pillLectureTexte}>Aléatoire</Text>
+                  </Pressable>
+                </View>
+              ) : undefined
+            }
+          />
         </Animated.View>
         <Animated.View
           pointerEvents={enSelection ? "auto" : "none"}
@@ -368,7 +452,7 @@ export default function Bibliotheque() {
       {enRecherche ? (
         <FlatList
           data={trouvees}
-          keyExtractor={(piste) => piste.video_id}
+          keyExtractor={(piste) => `${piste.playlist_id ?? "sans"}-${piste.video_id}`}
           ListHeaderComponent={enTete}
           renderItem={({ item }) => (
             <LigneTitre
@@ -408,21 +492,27 @@ export default function Bibliotheque() {
               opacity: avancee.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
             }}
           >
-            {bilan.titres > 0 ? enTete : null}
+            {/* L'en-tête vit même sans playlist : c'est lui qui porte la
+                recherche et le bouton « Nouvelle », et une bibliothèque vide
+                n'a pas moins besoin de créer une playlist qu'une autre. */}
+            {enTete}
           </Animated.View>
           {/* La montée se joue sur deux vues imbriquées pour garder un seul
               driver par vue : l'extérieure monte d'un glissement natif
               (translateY), l'intérieure grandit de la même mesure en JS
               (height) — le bas reste ancré et le haut ressert sur la
-              recherche, qui s'efface en place au-dessus. */}
+              recherche, qui s'efface en place au-dessus.
+              La hauteur de base (hauteurListe) est re-mesurée à chaque
+              layout, jamais figée : l'en-tête grandit quand les données
+              arrivent (résumé chiffré), et si l'espace restant restait
+              verrouillé à sa taille d'avant, le viewport s'étendait sous
+              la baguette d'onglets — plus rien à défiler, et le dernier
+              playlist passait sous le mini-lecteur. */}
           <Animated.View
-            onLayout={(e) => {
-              if (hauteurListe === 0) setHauteurListe(e.nativeEvent.layout.height);
-            }}
+            onLayout={(e) => setHauteurListe(e.nativeEvent.layout.height)}
             style={[
-              hauteurListe > 0 ? styles.porteListeMesuree : styles.porteListe,
+              styles.porteListe,
               {
-                height: hauteurListe > 0 ? hauteurListe : undefined,
                 transform: [
                   {
                     translateY: avancee.interpolate({
@@ -475,17 +565,20 @@ export default function Bibliotheque() {
               }}
             />
           )}
-          contentContainerStyle={[styles.liste, { paddingBottom: placeEnBas(insets.bottom, mini) }]}
+          contentContainerStyle={styles.liste}
+          ListFooterComponent={
+            // L'espace du bas vit dans le contenu, pas en marge de fin :
+            // en pied de liste, il défile et reste visible au-dessus du
+            // mini-lecteur quand la liste est longue, et offre un peu d'air
+            // quand elle est courte. La marge d'un contentContainer n'était,
+            // elle, atteinte qu'en fin de défilement maximum.
+            <View style={{ height: placeEnBas(insets.bottom, mini) }} />
+          }
           ListEmptyComponent={
             pret ? (
               <EcranVide
-                titre="Ta musique, sur ton téléphone"
-                explication="Scanne le code d'une playlist sur ton ordinateur : elle arrive ici, prête à écouter partout, même sans réseau."
-                etapes={[
-                  "Ouvre NeuroBeats sur ton ordinateur",
-                  "Choisis une playlist, affiche son code",
-                  "Scanne-le : les titres arrivent ici",
-                ]}
+                titre="Aucune playlist"
+                explication="Crée une playlist, ou scanne le code d'une playlist de ton ordinateur : elle arrive ici, prête à écouter partout, même sans réseau."
               />
             ) : null
           }
@@ -601,13 +694,26 @@ const styles = StyleSheet.create({
   },
   creerPresse: { opacity: 0.6 },
   creerTexte: { ...typo.section, color: colors.accent, fontWeight: "700" },
+  // Les deux commandes de lecture unifiée : des pilules compactes à la place
+  // du compteur de titres dans l'en-tête, discrètes tant que rien ne joue.
+  lecture: { flexDirection: "row", alignItems: "center", gap: space.xs },
+  pillLecture: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    height: 34,
+    paddingHorizontal: 11,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface2,
+  },
+  pillLectureTexte: { ...typo.label, color: colors.ink, fontWeight: "600" },
+  pillLecturePresse: { opacity: 0.6 },
   liste: { paddingTop: 0 },
   // Le conteneur des playlists : il monte d'un glissement quand la sélection
   // entre, la recherche s'effaçant sur place au-dessus de lui.
-  // `porteListe` remplit l'espace au premier layout (mesure de hauteurListe) ;
-  // ensuite `porteListeMesuree` cède la main à la hauteur animée.
+  // Toujours en flex:1, sans hauteur figée : l'en-tête au-dessus grandit
+  // quand les données arrivent, l'espace restant doit suivre, sans quoi le
+  // viewport s'étend sous la baguette et la liste perd son défilement.
   porteListe: { flex: 1 },
-  porteListeMesuree: {},
   listeInterne: { flex: 1 },
-  suivi: { marginBottom: space.lg },
 });

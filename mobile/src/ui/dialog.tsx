@@ -109,6 +109,9 @@ export function Dialogue({
       visible={visible}
       transparent
       animationType="fade"
+      // `statusBarTranslucent` seul, pour la même raison que la feuille : passer
+      // sous les barres système (edge-to-edge) empêcherait la fenêtre de se
+      // rétrécir devant le clavier. La barre sombre vient du thème natif.
       statusBarTranslucent
       onRequestClose={surFermer}
     >
@@ -255,9 +258,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: space.xl,
   },
+  // Le calque porte le voile et bloque les taps : derrière une boîte, on ne
+  // répond qu'aux boutons, jamais en touchant à côté.
   scrim: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: colors.scrim,
+    backgroundColor: colors.voileModale,
   },
   carte: {
     alignSelf: "stretch",
@@ -265,7 +270,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: colors.borderFort,
+    borderColor: colors.borderModale,
     padding: space.xl,
     gap: space.md,
     alignItems: "center",

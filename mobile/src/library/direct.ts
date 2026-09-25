@@ -135,6 +135,13 @@ function messageExtraction(erreur: unknown): string {
     INVALID_URL: "Lien de la vidéo incompréhensible.",
   };
   if (/sign in to confirm/i.test(brut)) return table.AUTHENTICATION_REQUIRED;
+  // « We're processing this video. Check back later. » : YouTube n'a pas fini
+  // de traiter la vidéo (souvent juste après sa publication). État temporaire,
+  // pas une erreur de l'application — on le dit en français plutôt que de
+  // laisser remonter la phrase anglaise brute.
+  if (/processing this video/i.test(brut)) {
+    return "Cette vidéo est encore en cours de traitement chez YouTube. Réessaie dans quelques minutes.";
+  }
   if (code && table[code as string]) return table[code as string];
   return brut || "Extraction impossible. Réessaie dans un instant.";
 }

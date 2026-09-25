@@ -10,8 +10,11 @@ import { describe, expect, it } from "@jest/globals";
 import type { Piste } from "@/db/repos";
 import { separerPartageables } from "@/library/partage";
 
+let compteur = 0;
 function piste(partiel: Partial<Piste> = {}): Piste {
+  compteur += 1;
   return {
+    id: compteur,
     video_id: "vid-1",
     playlist_id: null,
     titre: "Titre",

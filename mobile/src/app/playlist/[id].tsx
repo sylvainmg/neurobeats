@@ -19,13 +19,15 @@
  * fois — les retirer, ou les partager avec une autre application.
  */
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BackHandler,
   FlatList,
+  Keyboard,
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -50,6 +52,7 @@ import {
   IconPartage,
   IconPencil,
   IconPlay,
+  IconSearch,
   IconTrash,
 } from "@/ui/icons";
 import { Bouton, EcranVide } from "@/ui/kit";
@@ -70,7 +73,14 @@ export default function PagePlaylist() {
   const [nom, setNom] = useState(sansPlaylist ? "Sans playlist" : "");
   /** Née sur le téléphone ? Seule une telle playlist se renomme. */
   const [locale, setLocale] = useState(0);
+  /** La couverture scannée sur PC : le détail montre la même image que l'icône. */
+  const [couverture, setCouverture] = useState<string | null>(null);
   const [pistes, setPistes] = useState<Piste[]>([]);
+  /** Filtre local : l'UX d'une longue playlist sans quitter l'écran. */
+  const [recherche, setRecherche] = useState("");
+  /** Où le champ de recherche tombe dans la liste : on y amène la vue. */
+  const [positionRecherche, setPositionRecherche] = useState(0);
+  const liste = useRef<FlatList<Piste>>(null);
   const [chargé, setChargé] = useState(false);
   const [renommer, setRenommer] = useState(false);
   const { ouvrir: ouvrirDialogue, element: dialogue } = useDialogue();
@@ -78,7 +88,7 @@ export default function PagePlaylist() {
   /** Les titres choisis par un long appui, identifiés par leur videoId. */
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const enSelection = selection.size > 0;
-  const selectionPistes = pistes.filter((piste) => selection.has(piste.video_id));
+  const selectionPistes = pistes.filter((piste) => selection.has(String(piste.id)));
 
   const recharger = useCallback(async () => {
     const trouvees = await repo.listerPistesParPlaylist(sansPlaylist ? null : id);
@@ -93,6 +103,7 @@ export default function PagePlaylist() {
       const playlist = await repo.playlistParId(id);
       setNom(playlist?.nom ?? "");
       setLocale(playlist?.locale ?? 0);
+      setCouverture(playlist?.pochette ?? null);
     }
     setChargé(true);
   }, [id, sansPlaylist]);
@@ -130,13 +141,13 @@ export default function PagePlaylist() {
     return () => abonne.remove();
   }, [enSelection]);
 
-  const basculerSelection = (videoId: string) => {
+  const basculerSelection = (ligne: string) => {
     setSelection((precedente) => {
       const suivante = new Set(precedente);
-      if (suivante.has(videoId)) {
-        suivante.delete(videoId);
+      if (suivante.has(ligne)) {
+        suivante.delete(ligne);
       } else {
-        suivante.add(videoId);
+        suivante.add(ligne);
       }
       return suivante;
     });
@@ -170,6 +181,35 @@ export default function PagePlaylist() {
 
   const possedees = pistes.filter((piste) => piste.etat === "chez_toi");
   const manquants = pistes.length - possedees.length;
+
+  /**
+   * Ramène le champ de recherche à sa place à chaque ouverture du clavier.
+   *
+   * Le champ vit au bas de l'en-tête (pochette, titre, actions) : sans ce
+   * geste, le clavier s'ouvre juste sur lui et le recouvre. Le déclencheur est
+   * l'apparition du clavier, pas le focus : un champ qui a déjà le focus ne le
+   * reprend pas quand on rouvre le clavier, et la liste restait alors où elle
+   * était — le correctif ne marchait qu'une fois. À chaque fois, la liste
+   * revient donc exactement au même endroit : le champ en haut de la vue.
+   */
+  useEffect(() => {
+    const abonne = Keyboard.addListener("keyboardDidShow", () => {
+      liste.current?.scrollToOffset({
+        offset: positionRecherche,
+        animated: useApp.getState().animations,
+      });
+    });
+    return () => abonne.remove();
+  }, [positionRecherche]);
+
+  const recherchePropre = recherche.trim().toLowerCase();
+  const visibles = recherchePropre
+    ? pistes.filter(
+        (piste) =>
+          piste.titre.toLowerCase().includes(recherchePropre) ||
+          piste.chaine.toLowerCase().includes(recherchePropre),
+      )
+    : pistes;
 
   // Les titres qui téléchargent tournent leur icône (voir `LigneTitre`). Le
   // live vient de `suivis`, pas de la base : la base ne passe « chez toi »
@@ -231,13 +271,18 @@ export default function PagePlaylist() {
   /**
    * Supprimer les titres sélectionnés, décliné en deux issues.
    *
-   * La même carte pose les deux questions d'un retrait : garder le titre dans
-   * la playlist (on n'efface que le fichier) ou le faire disparaître aussi de
-   * la bibliothèque. Le choix est écrit avant l'acte, jamais « à côté » — une
-   * suppression ne s'évapore pas d'un tap involontaire.
+   * La carte pose les questions d'un retrait : garder le titre dans la playlist
+   * (on n'efface que le fichier, la couverture reste) ou le faire disparaître
+   * aussi de la bibliothèque, image comprise. Quand plus rien n'est sur le
+   * téléphone, seule la seconde reste. Le choix est écrit avant l'acte, jamais
+   * « à côté » — une suppression ne s'évapore pas d'un tap involontaire.
    */
   const supprimerSelection = () => {
     const cibles = selectionPistes;
+    // Les titres déjà retirés du téléphone n'ont plus de fichier à effacer :
+    // leur proposer « Retirer du téléphone » serait proposer une action vide.
+    // L'option disparaît quand il ne reste rien à retirer de ce côté-là.
+    const aRetirer = cibles.filter((piste) => Boolean(piste.fichier));
     ouvrirDialogue({
       ton: "danger",
       titre: `Supprimer ${pluraliser(cibles.length, "titre")} ?`,
@@ -245,19 +290,23 @@ export default function PagePlaylist() {
       icone: <IconTrash size={26} color={colors.danger} />,
       annuler: "Annuler",
       choix: [
-        {
-          libelle: "Retirer du téléphone",
-          description: "Le fichier est effacé, le titre reste dans la playlist.",
-          icone: <IconCloudDown size={20} color={colors.ink} />,
-          surChoisir: async () => {
-            await retirerDuTelephone(cibles);
-            setSelection(new Set());
-            await recharger();
-          },
-        },
+        ...(aRetirer.length > 0
+          ? [
+              {
+                libelle: "Retirer du téléphone",
+                description: "Le fichier est effacé, le titre reste dans la playlist.",
+                icone: <IconCloudDown size={20} color={colors.ink} />,
+                surChoisir: async () => {
+                  await retirerDuTelephone(cibles);
+                  setSelection(new Set());
+                  await recharger();
+                },
+              },
+            ]
+          : []),
         {
           libelle: "Supprimer définitivement",
-          description: "Le fichier et le titre sont retirés de la bibliothèque.",
+          description: "Le fichier, le titre et sa couverture sont retirés.",
           icone: <IconTrash size={20} color={colors.danger} />,
           danger: true,
           surChoisir: async () => {
@@ -438,26 +487,27 @@ export default function PagePlaylist() {
       </View>
 
       <FlatList
-        data={pistes}
-        keyExtractor={(piste) => piste.video_id}
+        ref={liste}
+        data={visibles}
+        keyExtractor={(piste) => String(piste.id)}
         renderItem={({ item }) => (
           <LigneTitre
             piste={item}
             onPress={() =>
-              enSelection ? basculerSelection(item.video_id) : void ecouter(item)
+              enSelection ? basculerSelection(String(item.id)) : void ecouter(item)
             }
             onLongPress={() => {
               // Le long appui entre en sélection et choisit la ligne pressée.
               // Déjà en sélection, il continue de choisir sans la quitter.
               if (!enSelection) {
-                setSelection(new Set([item.video_id]));
+                setSelection(new Set([String(item.id)]));
               } else {
-                basculerSelection(item.video_id);
+                basculerSelection(String(item.id));
               }
             }}
             enCours={enCours.has(item.video_id)}
             enSelection={enSelection}
-            selectionne={selection.has(item.video_id)}
+            selectionne={selection.has(String(item.id))}
           />
         )}
         contentContainerStyle={[
@@ -471,7 +521,10 @@ export default function PagePlaylist() {
                 titres est dans chaque ligne, pas sur la vignette d'en-tête. */}
             <View style={styles.pochette}>
               <Vignette
-                pochette={pistes[0]?.pochette ?? null}
+                // La même image que l'icône de la liste : la pochette de la
+                // playlist, sinon celle de son premier titre (« Sans
+                // playlist » n'a pas de playlist pour la lui donner).
+                pochette={couverture ?? pistes.find((piste) => piste.pochette)?.pochette ?? null}
                 titre={nom || "…"}
                 taille={220}
                 rayon={radius.lg}
@@ -540,10 +593,45 @@ export default function PagePlaylist() {
                 Reprends le téléchargement des titres manquants.
               </Text>
             ) : null}
+            {/* Le filtre vit sous les actions : la pochette et le nom restent
+                l'identité de l'écran, la recherche n'est qu'un outil. */}
+            {pistes.length > 3 ? (
+              <View
+                style={styles.recherche}
+                onLayout={(e) => setPositionRecherche(e.nativeEvent.layout.y)}
+              >
+                <IconSearch size={17} color={colors.ink2} />
+                <TextInput
+                  value={recherche}
+                  onChangeText={setRecherche}
+                  placeholder="Rechercher dans cette playlist"
+                  placeholderTextColor={colors.ink3}
+                  style={styles.champ}
+                  accessibilityLabel="Rechercher dans cette playlist"
+                  returnKeyType="search"
+                />
+                {recherche ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Effacer la recherche"
+                    onPress={() => setRecherche("")}
+                    hitSlop={6}
+                    style={({ pressed }) => [pressed && styles.retourPresse]}
+                  >
+                    <IconClose size={17} color={colors.ink2} />
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
           </View>
         }
         ListEmptyComponent={
-          chargé ? (
+          recherchePropre ? (
+            <EcranVide
+              titre="Aucun titre trouvé"
+              explication="Aucun titre de cette playlist ne correspond à cette recherche."
+            />
+          ) : chargé ? (
             <EcranVide
               titre="Aucun titre ici"
               explication={
@@ -669,6 +757,24 @@ const styles = StyleSheet.create({
     ...ombre.pochette,
   },
   centre: { textAlign: "center" },
+  recherche: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: space.sm,
+    paddingHorizontal: 15,
+    paddingVertical: 11,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  champ: {
+    flex: 1,
+    color: colors.ink,
+    fontSize: 14,
+    padding: 0,
+  },
   titre: { ...typo.ecran, color: colors.ink },
   resume: { ...typo.caption, color: colors.ink2 },
   actions: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: space.sm, marginTop: 6 },

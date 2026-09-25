@@ -60,27 +60,41 @@ export default function Transferts() {
   );
 
   const enCours = suivis.filter((suivi) => suivi.etat !== "annule" && suivi.etat !== "termine");
-  const recus = enCours.reduce((total, suivi) => total + suivi.recus, 0);
-  const poidsTotal =
-    enCours.reduce((total, suivi) => total + (suivi.total || 0), 0) +
-    preparation.reduce((total, titre) => total + titre.taille, 0);
+  /**
+   * Ce qui télécharge vraiment.
+   *
+   * Un titre terminé n'est plus « en cours » — il n'a plus rien à recevoir —, et
+   * un titre en pause ou en échec non plus. Compter les arrivés gonflait le
+   * chiffre (« 29 sur 30 ») et faisait passer toute une session pour un lot en
+   * cours. L'état ne dit donc que ce qui reçoit des octets maintenant : le
+   * reste est dans la liste, avec son propre état, pas dans le total.
+   */
+  const actifs = enCours.filter(
+    (suivi) => suivi.etat === "en_cours" || suivi.etat === "en_file",
+  );
+  const recus = actifs.reduce((total, suivi) => total + suivi.recus, 0);
+  const poidsTotal = actifs.reduce((total, suivi) => total + (suivi.total || 0), 0);
   const lignes: Ligne[] = [
     ...enCours.map((suivi) => ({ cle: suivi.videoId, suivi })),
     ...preparation.map((titre) => ({ cle: titre.videoId, preparation: titre })),
   ];
-  const totalLignes = lignes.length + finis;
-  // Une demande native sans raison annoncée mais avec « Wi-Fi uniquement » et
-  // des octets à zéro : le système l'a mise en file pour un réseau non facturé.
+  // Le système le dit : une demande gardée « en attente du Wi-Fi » (ou du
+  // réseau) sans un octet reçu. C'est la seule preuve honnête d'une attente de
+  // réseau — un « en file » muet est le plus souvent une file qui s'ouvre, pas
+  // une attente annoncée. Une attente du Wi-Fi vraie arrive aussi en « suspendu »
+  // (le système a mis la demande en pause en attendant le Wi-Fi).
   const attenteReseau =
     wifiSeul &&
-    enCours.some((suivi) => suivi.etat === "en_file" && suivi.recus === 0 && !suivi.raison);
+    enCours.some(
+      (suivi) =>
+        (suivi.etat === "en_file" || suivi.etat === "suspendu") &&
+        suivi.recus === 0 &&
+        (suivi.raison === "en attente du Wi-Fi" || suivi.raison === "en attente du réseau"),
+    );
 
   return (
     <View style={styles.porte}>
-      <EnTeteEcran
-        titre="Téléchargements"
-        meta={totalLignes > 0 ? pluraliser(totalLignes, "titre") : undefined}
-      />
+      <EnTeteEcran titre="Téléchargements" />
 
       {!persistant ? (
         <View style={styles.bloc}>
@@ -91,20 +105,22 @@ export default function Transferts() {
         </View>
       ) : null}
 
-      {enCours.length > 0 ? (
+      {actifs.length > 0 ? (
         <View style={styles.bloc}>
           <View style={styles.total}>
             <View style={styles.totalHaut}>
               <Text style={styles.totalChiffre}>
                 {formaterPourcent(poidsTotal > 0 ? recus / poidsTotal : 0)}
               </Text>
+              {/* Le nombre de titres qui téléchargent, pas un total de session :
+                  « 29 sur 30 » comptait les titres déjà arrivés. */}
               <Text style={styles.totalDetail}>
-                {`${finis} sur ${totalLignes} titres`}
+                {`${pluraliser(actifs.length, "titre")} en cours`}
               </Text>
             </View>
             <BarreDeProgression
               fraction={poidsTotal > 0 ? recus / poidsTotal : 0}
-              travail={enCours.some((s) => s.etat === "en_cours" && s.recus > 0)}
+              travail={actifs.some((s) => s.etat === "en_cours" && s.recus > 0)}
               libelle="Téléchargement de la playlist en cours"
             />
             <View style={styles.actions}>
@@ -115,7 +131,7 @@ export default function Transferts() {
                   taille="petite"
                   icone={<IconPause size={15} color={colors.ink} rempli />}
                   onPress={() => {
-                    for (const suivi of enCours) {
+                    for (const suivi of actifs) {
                       if (suivi.etat === "en_cours") void gestionnaire.pause(suivi.videoId);
                     }
                   }}
@@ -147,7 +163,7 @@ export default function Transferts() {
         <View style={styles.bloc}>
           <Bandeau
             ton="attention"
-            texte="Les transferts attendent le Wi-Fi. Décoche « Wi-Fi uniquement » dans les réglages pour les lancer sur ton forfait."
+            texte="Les transferts attendent un réseau Wi-Fi et reprendront tout seuls. Pour les lancer sur ton forfait, désactive « Wi-Fi uniquement » dans les réglages."
           />
         </View>
       ) : null}
@@ -157,7 +173,7 @@ export default function Transferts() {
         keyExtractor={(ligne) => ligne.cle}
         renderItem={({ item }) =>
           "suivi" in item ? (
-            <LigneTransfert suivi={item.suivi} persistant={persistant} wifiSeul={wifiSeul} />
+            <LigneTransfert suivi={item.suivi} persistant={persistant} />
           ) : (
             <LignePreparation titre={item.preparation} />
           )
@@ -182,7 +198,7 @@ export default function Transferts() {
           />
         }
         ListFooterComponent={
-          totalLignes > 0 && persistant && !notificationsAccordees ? (
+          lignes.length > 0 && persistant && !notificationsAccordees ? (
             <View style={styles.bloc}>
               <Bandeau
                 ton="attention"
@@ -203,17 +219,19 @@ export default function Transferts() {
  *
  * Une demande confiée au système peut attendre longtemps sans rien dire. Quand
  * le système donne sa raison (« en attente du Wi-Fi »), on la reprend telle
- * quelle — c'est la seule explication honnête de l'immobilité.
+ * quelle — c'est la seule explication honnête de l'immobilité. Sans raison, on
+ * reste neutre (« en attente ») : une file qui s'ouvre n'est pas une attente de
+ * réseau à affirmer.
  */
-function detailDe(suivi: Suivi, wifiSeul: boolean): string {
+function detailDe(suivi: Suivi): string {
   const avance = suivi.total > 0 ? formaterPourcent(suivi.recus / suivi.total) : "";
   switch (suivi.etat) {
     case "en_file":
-      // Sans raison annoncée par le système, l'attente vient du refus des
-      // réseaux facturés : c'est le seul cas où le système garde une demande
-      // indéfiniment sans rien dire.
-      return suivi.raison ?? (wifiSeul ? "en attente du Wi-Fi" : "en attente");
+      return suivi.raison ?? "en attente";
     case "en_cours":
+      // Une raison (publication en attente, nouvelle tentative) dit mieux ce
+      // qui se passe qu'un simple pourcentage : on la montre d'abord.
+      if (suivi.raison) return suivi.raison;
       return avance ? `en cours · ${avance}` : "en cours";
     case "termine":
       return "terminé";
@@ -230,11 +248,9 @@ function detailDe(suivi: Suivi, wifiSeul: boolean): string {
 function LigneTransfert({
   suivi,
   persistant,
-  wifiSeul,
 }: {
   suivi: Suivi;
   persistant: boolean;
-  wifiSeul: boolean;
 }) {
   const nom = gestionnaire.titreDe(suivi.videoId);
   const fraction = suivi.total > 0 ? suivi.recus / suivi.total : 0;
@@ -270,7 +286,7 @@ function LigneTransfert({
           {nom}
         </Text>
         <Text style={styles.ligneDetail} numberOfLines={2}>
-          {detailDe(suivi, wifiSeul)}
+          {detailDe(suivi)}
         </Text>
       </View>
       {marque}

@@ -1,5 +1,5 @@
 /**
- * Les destinations : bibliothèque, navigateur, transferts, réglages.
+ * Les destinations : bibliothèque, transferts, navigateur, réglages.
  *
  * Le mini-lecteur vit ici, au-dessus de la barre : il appartient à la coquille de
  * l'application, pas à un écran — sinon il disparaîtrait dès qu'on change
@@ -32,8 +32,8 @@ export default function Onglets() {
         tabBar={(props) => <BarreDeNavigation {...props} transferts={transferts} />}
       >
         <Tabs.Screen name="index" options={{ title: "Bibliothèque" }} />
-        <Tabs.Screen name="navigateur" options={{ title: "Navigateur" }} />
         <Tabs.Screen name="downloads" options={{ title: "Téléchargements" }} />
+        <Tabs.Screen name="navigateur" options={{ title: "Navigateur" }} />
         <Tabs.Screen name="settings" options={{ title: "Réglages" }} />
       </Tabs>
       <MiniLecteur onOuvrir={() => router.push("/player")} />

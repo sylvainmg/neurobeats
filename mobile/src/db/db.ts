@@ -25,7 +25,13 @@ CREATE TABLE IF NOT EXISTS playlists (
 );
 
 CREATE TABLE IF NOT EXISTS tracks (
-  video_id     TEXT PRIMARY KEY NOT NULL,
+  -- Ligne locale : un même titre peut revenir dans plusieurs playlists, donc
+  -- l'identité n'est plus la vidéo seule mais le couple (vidéo, playlist).
+  -- UNIQUE laisse passer les doublons quand la playlist est NULL (SQLite
+  -- traite NULL comme distinct) : pour « Sans playlist », c'est la logique
+  -- applicative (enregistrerPiste) qui refuse le doublon, pas la base.
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  video_id     TEXT NOT NULL,
   playlist_id  TEXT,
   titre        TEXT NOT NULL,
   chaine       TEXT NOT NULL DEFAULT '',
@@ -37,6 +43,7 @@ CREATE TABLE IF NOT EXISTS tracks (
   etat         TEXT NOT NULL DEFAULT 'absent',
   ajoute_le    INTEGER NOT NULL,
   ecoute_le    INTEGER,
+  UNIQUE (video_id, playlist_id),
   FOREIGN KEY (playlist_id) REFERENCES playlists (playlist_id) ON DELETE SET NULL
 );
 
@@ -81,6 +88,7 @@ async function ouvrir(): Promise<SQLite.SQLiteDatabase> {
   await base.execAsync(SCHEMA);
   await ajouterCouverture(base);
   await ajouterLocalite(base);
+  await migrerTracksDoublons(base);
   return base;
 }
 
@@ -102,6 +110,48 @@ async function ajouterLocalite(base: SQLite.SQLiteDatabase) {
   const colonnes = await base.getAllAsync<{ name: string }>(`PRAGMA table_info(playlists)`);
   if (colonnes.some((colonne) => colonne.name === "locale")) return;
   await base.execAsync(`ALTER TABLE playlists ADD COLUMN locale INTEGER NOT NULL DEFAULT 0`);
+}
+
+/**
+ * Fait passer les titres à l'identité par playlist.
+ *
+ * Les bases déjà installées ont `video_id` en clé primaire : un même titre ne
+ * pouvait vivre que dans une seule playlist. On reconstruit la table avec une
+ * clé `id` et une unicité sur le couple (vidéo, playlist), en gardant les
+ * lignes existantes telles quelles.
+ */
+async function migrerTracksDoublons(base: SQLite.SQLiteDatabase) {
+  const colonnes = await base.getAllAsync<{ name: string }>(`PRAGMA table_info(tracks)`);
+  if (colonnes.length === 0 || colonnes.some((colonne) => colonne.name === "id")) return;
+  await base.execAsync(`
+    ALTER TABLE tracks RENAME TO tracks_ancien;
+    CREATE TABLE tracks (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      video_id     TEXT NOT NULL,
+      playlist_id  TEXT,
+      titre        TEXT NOT NULL,
+      chaine       TEXT NOT NULL DEFAULT '',
+      album        TEXT NOT NULL DEFAULT '',
+      duree        INTEGER NOT NULL DEFAULT 0,
+      taille       INTEGER NOT NULL DEFAULT 0,
+      fichier      TEXT,
+      pochette     TEXT,
+      etat         TEXT NOT NULL DEFAULT 'absent',
+      ajoute_le    INTEGER NOT NULL,
+      ecoute_le    INTEGER,
+      UNIQUE (video_id, playlist_id),
+      FOREIGN KEY (playlist_id) REFERENCES playlists (playlist_id) ON DELETE SET NULL
+    );
+    INSERT INTO tracks (video_id, playlist_id, titre, chaine, album, duree, taille,
+                        fichier, pochette, etat, ajoute_le, ecoute_le)
+      SELECT video_id, playlist_id, titre, chaine, album, duree, taille,
+             fichier, pochette, etat, ajoute_le, ecoute_le
+      FROM tracks_ancien;
+    DROP TABLE tracks_ancien;
+    CREATE INDEX IF NOT EXISTS idx_tracks_playlist ON tracks (playlist_id);
+    CREATE INDEX IF NOT EXISTS idx_tracks_etat ON tracks (etat);
+    CREATE INDEX IF NOT EXISTS idx_tracks_ecoute ON tracks (ecoute_le DESC);
+  `);
 }
 
 export async function closeForTests() {

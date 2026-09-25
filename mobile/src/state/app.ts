@@ -12,7 +12,7 @@ import { create } from "zustand";
 import * as repo from "@/db/repos";
 import { db } from "@/db/db";
 import { nommerFichier } from "@/fichiers/nommage";
-import { verifier } from "modules/downloader";
+import { supprimer, verifier } from "modules/downloader";
 import { Gestionnaire, transfertPersistant } from "@/transfer/downloader";
 import type { Spec, Suivi } from "@/transfer/downloader";
 import { dureeDeFichier } from "@/transfer/duree";
@@ -131,9 +131,21 @@ const gestionnaire = new Gestionnaire(
 async function enregistrerTermines(suivis: Suivi[]) {
   for (const suivi of suivis) {
     if (suivi.etat !== "termine" || !suivi.uri) continue;
-    const piste = await repo.pisteParId(suivi.videoId);
-    if (piste?.fichier === suivi.uri) continue;
-    await repo.marquerPossede(suivi.videoId, suivi.uri, suivi.total || piste?.taille || 0);
+    // Un même titre peut vivre dans plusieurs playlists : on ne saute la
+    // possession que si **toutes** ses lignes portent déjà ce fichier. Regarder
+    // une seule ligne (la première trouvée) faisait conclure « déjà servi »
+    // quand une autre playlist le possédait déjà — la ligne de la playlist qu'on
+    // venait de télécharger restait « absente » pour toujours.
+    const lignes = await repo.pistesParVideo(suivi.videoId);
+    const servies =
+      lignes.length > 0 &&
+      lignes.every((ligne) => ligne.etat === "chez_toi" && ligne.fichier === suivi.uri);
+    if (servies) continue;
+    await repo.marquerPossede(
+      suivi.videoId,
+      suivi.uri,
+      suivi.total || lignes[0]?.taille || 0,
+    );
     // Une possession fraîche fait monter le compteur public : les écrans abonnés
     // relisent leur contenu une fois la base réellement mise à jour. Sans cette
     // montée, un écran déjà affiché croirait que le titre manque encore.
@@ -143,7 +155,10 @@ async function enregistrerTermines(suivis: Suivi[]) {
     const arrivee = await repo.pisteParId(suivi.videoId);
     if (arrivee && arrivee.duree <= 0) {
       const duree = await dureeDeFichier(suivi.uri);
-      if (duree && duree > 0) await repo.enregistrerPiste({ ...arrivee, duree });
+      if (duree && duree > 0) {
+        const lignes = await repo.pistesParVideo(suivi.videoId);
+        for (const ligne of lignes) await repo.enregistrerPiste({ ...ligne, duree });
+      }
     }
   }
 }
@@ -191,8 +206,7 @@ async function retenirPochette(videoId: string, adresse: string | null): Promise
   const locale = await telechargerPochette(adresse, videoId);
   const pochette = locale ?? adresse;
   if (!pochette) return;
-  const existante = await repo.pisteParId(videoId);
-  if (existante) await repo.enregistrerPiste({ ...existante, pochette });
+  await repo.definirPochette(videoId, pochette);
 }
 
 /**
@@ -206,7 +220,27 @@ async function retenirPochette(videoId: string, adresse: string | null): Promise
  * avec un bouton pour réessayer. Sans ce bornage, une source morte figerait une
  * ligne « en préparation » pour toujours.
  */
-const PREPARATION_TIMEOUT_MS = 3 * 60_000;
+/**
+ * Budget d'attente d'une préparation, proportionnel à la durée annoncée.
+ *
+ * Un forfait fixe de 3 min faisait échouer un titre juste lent : YouTube bride
+ * un téléchargement continu (~35 Ko/s mesuré), donc une préparation honnête
+ * dépasse souvent ces 3 minutes. On accorde ~1,25 s d'attente par seconde de
+ * titre, plancher 90 s, plafond 15 min : une source lente finit son travail,
+ * une source morte ne fige toujours pas la ligne.
+ */
+function budgetPreparation(piste: PisteManifeste): number {
+  const parDuree = (piste.duree ?? 0) * 1000 * 1.25;
+  return Math.min(15 * 60_000, Math.max(90_000, 90_000 + parDuree));
+}
+
+/**
+ * Rythme du poller : 4 s tant qu'un titre peut encore devenir prêt, 15 s quand
+ * seuls des échecs restent — ceux-ci se rattrapent parfois (le bureau finit la
+ * préparation après coup) et le téléphone doit les attraper sans intervention.
+ */
+const POLL_PREPARATION_MS = 4000;
+const POLL_ECHECS_MS = 15_000;
 
 const enAttente = new Map<string, PisteManifeste>();
 /** Titres dont le bureau n'arrive plus, avec la raison de l'abandon. */
@@ -218,6 +252,11 @@ let minuteurPreparation: ReturnType<typeof setInterval> | null = null;
 let manifesteEnCours: Manifeste | null = null;
 /** Contexte du lot courant : permet de relancer une préparation échouée. */
 let contextePreparation: { code: Code; manifeste: Manifeste; nomLot: string } | null = null;
+/**
+ * Fin de vie annoncée de la session : le poller ne tourne pas au-delà, sinon
+ * un bureau éteint ferait une boucle de questions sans fin.
+ */
+let finDeVieSession: number | null = null;
 
 /** Ce qui attend, tel que l'écran des transferts le montre ligne par ligne. */
 function publierPreparation() {
@@ -248,6 +287,15 @@ function stopperMinuteurPreparation() {
   minuteurPreparation = null;
 }
 
+/** Reclenche le poller au rythme demandé, en remplaçant l'éventuel précédent. */
+function reclencherPoller(code: Code, manifeste: Manifeste, nomLot: string, delai: number) {
+  stopperMinuteurPreparation();
+  minuteurPreparation = setInterval(
+    () => void pomperPreparation(code, manifeste, nomLot),
+    delai,
+  );
+}
+
 function arreterPreparation() {
   stopperMinuteurPreparation();
   enAttente.clear();
@@ -256,6 +304,7 @@ function arreterPreparation() {
   debuts.clear();
   manifesteEnCours = null;
   contextePreparation = null;
+  finDeVieSession = null;
   publierPreparation();
 }
 
@@ -271,19 +320,24 @@ function marquerEchecPreparation(videoId: string, raison: string) {
 
 async function pomperPreparation(code: Code, manifeste: Manifeste, nomLot: string) {
   const maintenant = Date.now();
+  // La session annonce sa vie restante : on ne garde pas le poller au-delà,
+  // sinon un bureau éteint ferait tourner une boucle de questions sans fin.
+  if (finDeVieSession != null && maintenant >= finDeVieSession) {
+    stopperMinuteurPreparation();
+    return;
+  }
   for (const videoId of [...enAttente.keys()]) {
+    const piste = enAttente.get(videoId);
+    if (!piste) continue;
     const debut = debuts.get(videoId) ?? maintenant;
-    if (maintenant - debut >= PREPARATION_TIMEOUT_MS) {
+    if (maintenant - debut >= budgetPreparation(piste)) {
       marquerEchecPreparation(
         videoId,
-        "Le bureau met trop de temps à préparer ce titre. Peut-être que sa source ne répond plus.",
+        "La préparation de ce titre traîne depuis longtemps. La source est peut-être lente ou bloquée : relance-le pour réessayer.",
       );
     }
   }
-  if (enAttente.size === 0) {
-    // Tout est passé en échec (ou déjà parti) : on coupe le poller. On garde le
-    // contexte pour que « Réessayer » puisse relancer le même lot, et les lignes
-    // d'échec restent visibles jusqu'à la fermeture de la session.
+  if (enAttente.size === 0 && echouees.size === 0) {
     stopperMinuteurPreparation();
     return;
   }
@@ -303,22 +357,30 @@ async function pomperPreparation(code: Code, manifeste: Manifeste, nomLot: strin
         );
       }
     }
+    // Un titre devenu prêt part en téléchargement, qu'il ait attendu ou déjà
+    // échoué : une préparation finit souvent par aboutir (source provisoirement
+    // injoignable) et le téléphone ne doit pas la rater — c'est le cas SWISH.
     const devenusPrets = analyse.manifeste.pistes.filter(
-      (piste) => piste.etat === "pret" && enAttente.has(piste.video_id),
+      (piste) =>
+        piste.etat === "pret" &&
+        (enAttente.has(piste.video_id) || echouees.has(piste.video_id)),
     );
     for (const piste of devenusPrets) {
       enAttente.delete(piste.video_id);
+      echouees.delete(piste.video_id);
+      raisonsEchec.delete(piste.video_id);
       debuts.delete(piste.video_id);
       await retenirPochette(piste.video_id, piste.pochette);
       gestionnaire.enFile([specDe(piste, analyse.manifeste)], nomLot);
     }
     publierPreparation();
-    if (enAttente.size === 0) {
-      // Même règle qu'au départ : plus rien à attendre, on éteint le poller.
-      // Mais s'il ne reste que des échecs, le contexte survit pour « Réessayer ».
-      if (echouees.size === 0) arreterPreparation();
-      else stopperMinuteurPreparation();
+    if (enAttente.size === 0 && echouees.size === 0) {
+      arreterPreparation();
+      return;
     }
+    // Rien n'attend plus : on ralentit la garde au lieu de l'éteindre.
+    const cadence = enAttente.size > 0 ? POLL_PREPARATION_MS : POLL_ECHECS_MS;
+    reclencherPoller(code, manifeste, nomLot, cadence);
   } catch {
     // Réseau capricieux : le prochain tour réessaiera.
   }
@@ -328,9 +390,12 @@ function lancerPreparation(code: Code, manifeste: Manifeste, pistes: PisteManife
   arreterPreparation();
   manifesteEnCours = manifeste;
   const maintenant = Date.now();
+  // La session annonce sa vie restante au scan : elle borne toute la garde.
+  finDeVieSession = maintenant + Math.max(60, (manifeste.expire_dans ?? 20 * 60)) * 1000;
   for (const piste of pistes) {
     // Un échec déjà annoncé par le bureau ne part pas poller pour rien : il
-    // s'affiche aussitôt avec sa raison et son bouton « Réessayer ».
+    // s'affiche aussitôt avec sa raison et son bouton « Réessayer », mais la
+    // garde continue de l'observer — il peut finir par devenir prêt.
     if (piste.etat === "erreur") {
       echouees.set(piste.video_id, piste);
       raisonsEchec.set(piste.video_id, "L'ordinateur n'a pas pu préparer ce titre.");
@@ -342,18 +407,20 @@ function lancerPreparation(code: Code, manifeste: Manifeste, pistes: PisteManife
   const nomLot = manifeste.playlist;
   contextePreparation = { code, manifeste, nomLot };
   publierPreparation();
-  if (enAttente.size === 0) return;
+  if (enAttente.size === 0 && echouees.size === 0) return;
   // Le lot natif porte le nom de la playlist : les titres qui deviennent prêts
   // rejoignent le lot du premier import, une seule notification de fin à décrire.
-  minuteurPreparation = setInterval(
-    () => void pomperPreparation(code, manifeste, nomLot),
-    4000,
-  );
+  reclencherPoller(code, manifeste, nomLot, POLL_PREPARATION_MS);
 }
 
 function bilanDe(manifeste: Manifeste, locales: Set<string>): BilanImport {
-  const nouveaux = manifeste.pistes.filter((p) => !locales.has(p.video_id));
-  const dejaLa = manifeste.pistes.filter((p) => locales.has(p.video_id));
+  // Le bilan porte sur la playlist scannée : un titre « chez toi » ailleurs
+  // reste un nouveau ici (il faudra le relier), sauf s'il est déjà relié ici.
+  const dedans = new Set(
+    manifeste.pistes.map((p) => p.video_id).filter((id) => locales.has(`${manifeste.playlist_id}::${id}`)),
+  );
+  const nouveaux = manifeste.pistes.filter((p) => !dedans.has(p.video_id));
+  const dejaLa = manifeste.pistes.filter((p) => dedans.has(p.video_id));
   const poidsEstime = nouveaux.reduce(
     (total, piste) => total + (piste.taille ?? estimerPoids(piste.duree, manifeste.debit_estime)),
     0,
@@ -479,9 +546,51 @@ export const useApp = create<Etat>((set, get) => ({
     }
     let locales = new Set<string>();
     try {
-      locales = new Set(
-        (await repo.listerPistes()).filter((p) => p.etat === "chez_toi").map((p) => p.video_id),
+      const possedees = (await repo.listerPistes()).filter((p) => p.etat === "chez_toi");
+      // Clé par couple : la même vidéo peut être « chez toi » dans une autre
+      // playlist sans être reliée à celle qu'on scanne.
+      locales = new Set(possedees.map((p) => `${p.playlist_id ?? ""}::${p.video_id}`));
+      // Un rescan doit dire la vérité : un titre « chez toi » ne compte comme
+      // déjà là que si son fichier est présent ET publié dans la bibliothèque
+      // publique (content://). Ce sont les anciens titres gagnés par le repli
+      // privé file:// (invisibles dans le lecteur Musique du téléphone) ou des
+      // fichiers disparus en cours de route : on les rend au téléchargement,
+      // table comme registre natif, pour que la livraison se refasse proprement.
+      const idsDuManifeste = new Set(analyse.manifeste.pistes.map((p) => p.video_id));
+      const declares = possedees.filter(
+        (p) =>
+          p.fichier &&
+          p.playlist_id === analyse.manifeste.playlist_id &&
+          idsDuManifeste.has(p.video_id),
       );
+      let aRendre = declares.filter((p) => !p.fichier!.startsWith("content://"));
+      const aVerifier = declares
+        .filter((p) => p.fichier!.startsWith("content://"))
+        .map((p) => p.fichier!);
+      if (aVerifier.length > 0) {
+        const presents = new Set(await verifier(aVerifier));
+        aRendre = [
+          ...aRendre,
+          ...declares.filter(
+            (p) => p.fichier!.startsWith("content://") && !presents.has(p.fichier!),
+          ),
+        ];
+      }
+      if (aRendre.length > 0) {
+        const ids = new Set(aRendre.map((p) => p.video_id));
+        await repo.retirerDuLocal([...ids], analyse.manifeste.playlist_id);
+        for (const p of aRendre) {
+          locales.delete(`${p.playlist_id ?? ""}::${p.video_id}`);
+          // Une vieille ligne du registre natif ressusciterait au balayage
+          // suivant : on l'efface avec son fichier. Un échec ici ne bloque pas
+          // l'import — le titre sera relivré de toute façon.
+          try {
+            await supprimer(p.video_id, p.fichier!);
+          } catch {
+            // registre déjà propre ou module absent : rien d'important.
+          }
+        }
+      }
     } catch {
       // Base illisible : on propose tout, plutôt que d'empêcher le transfert.
     }
@@ -509,7 +618,16 @@ export const useApp = create<Etat>((set, get) => ({
       manifeste.playlist,
       manifeste.pistes[0]?.video_id ?? null,
     );
+    // Un titre déjà « chez toi » dans une autre playlist ne se retélécharge
+    // pas : la nouvelle ligne est reliée au même fichier.
+    const connus = new Map<string, { fichier: string | null; taille: number }>();
+    for (const ligne of await repo.listerPistes()) {
+      if (ligne.etat === "chez_toi" && ligne.fichier && !connus.has(ligne.video_id)) {
+        connus.set(ligne.video_id, { fichier: ligne.fichier, taille: ligne.taille });
+      }
+    }
     for (const piste of manifeste.pistes) {
+      const connu = connus.get(piste.video_id);
       await repo.enregistrerPiste({
         video_id: piste.video_id,
         playlist_id: manifeste.playlist_id,
@@ -518,15 +636,18 @@ export const useApp = create<Etat>((set, get) => ({
         album: manifeste.playlist,
         duree: piste.duree,
         taille: piste.taille ?? estimerPoids(piste.duree, manifeste.debit_estime),
-        fichier: null,
+        fichier: connu?.fichier ?? null,
         pochette: null,
-        etat: "absent",
+        etat: connu ? "chez_toi" : "absent",
       });
     }
     // Les pochettes se rapatrient d'abord : un titre sans vignette une fois hors
     // ligne resterait sans vignette.
     const specs: Spec[] = [];
     for (const piste of aPrendre.filter((annonce) => annonce.etat === "pret")) {
+      // Déjà relié à un fichier venu d'une autre playlist : rien à télécharger.
+      const reliee = await repo.pisteDansPlaylist(piste.video_id, manifeste.playlist_id);
+      if (reliee?.etat === "chez_toi" && reliee.fichier) continue;
       await retenirPochette(piste.video_id, piste.pochette);
       specs.push(specDe(piste, manifeste));
     }
@@ -574,10 +695,7 @@ export const useApp = create<Etat>((set, get) => ({
     publierPreparation();
     if (!minuteurPreparation) {
       const { code, manifeste, nomLot } = contextePreparation;
-      minuteurPreparation = setInterval(
-        () => void pomperPreparation(code, manifeste, nomLot),
-        4000,
-      );
+      reclencherPoller(code, manifeste, nomLot, POLL_PREPARATION_MS);
     }
   },
 
@@ -626,11 +744,26 @@ export const useApp = create<Etat>((set, get) => ({
 
   telechargerDirect: async ({ videoId, titre, chaine, duree, format, pochette, playlistId }) => {
     try {
-      // Un titre déjà dans la bibliothèque n'y rentre pas deux fois : la clé
-      // est le video_id, réassigner playlist_id ferait basculer le titre d'une
-      // playlist à l'autre.
-      const existante = await repo.pisteParId(videoId);
-      if (existante) return { ok: false, raison: "deja" as const };
+      // L'unicité est par playlist : un même titre peut vivre dans plusieurs
+      // playlists, chacune avec sa ligne. Seul un doublon dans CETTE playlist
+      // est refusé — et seulement s'il est réellement possédé. Une ligne
+      // « absente » (transfert raté) se réutilise et relance son téléchargement.
+      const dansCelleCi = await repo.pisteDansPlaylist(videoId, playlistId);
+      if (dansCelleCi && dansCelleCi.etat === "chez_toi") {
+        return { ok: false, raison: "deja" as const };
+      }
+      // Un téléchargement de ce titre déjà en cours (que la piste soit en base
+      // ou non) est à laisser tranquille : le relancer empilerait les extractions.
+      const dejaEnCours = useApp.getState().suivis.some(
+        (s) => s.videoId === videoId && (s.etat === "en_cours" || s.etat === "en_file"),
+      );
+      if (dejaEnCours) {
+        return {
+          ok: false,
+          raison: "echouee" as const,
+          message: "Ce titre est déjà en cours de téléchargement.",
+        };
+      }
       const playlist = await repo.playlistParId(playlistId);
       if (!playlist || playlist.locale !== 1) return { ok: false, raison: "introuvable" as const };
       await repo.enregistrerPiste({

@@ -6,6 +6,7 @@
  * sans que l'utilisateur ait à faire quoi que ce soit.
  */
 import { Stack } from "expo-router";
+import * as NavigationBar from "expo-navigation-bar";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { StyleSheet } from "react-native";
@@ -21,6 +22,11 @@ export default function Racine() {
   useEffect(() => {
     void initialiser();
     void preparerLecteur();
+    // La barre de navigation native reste sombre, thème système clair ou non :
+    // l'app est en thème sombre, OneUI la peindrait en blanc sinon. « light »
+    // = icônes claires sur barre sombre (même contrat visuel que Spotify, qui
+    // ne suit pas non plus le thème du téléphone sur sa page d'accueil).
+    NavigationBar.setStyle("light");
     return gestionnaire.demarrerLeSuivi();
   }, [initialiser]);
 

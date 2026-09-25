@@ -21,6 +21,18 @@ export const DOSSIER_TRANSFERT = new Directory(Paths.document, "transfert");
 /** Pochettes rapatriées à l'import, pour rester visibles en mode avion. */
 export const DOSSIER_POCHETTES = new Directory(Paths.document, "pochettes");
 
+/**
+ * Construit le File d'un fichier du dossier transfert, nom quelconque compris.
+ *
+ * Un titre YouTube peut porter des crochets (« [Full Ver.] »), légaux dans un
+ * chemin système mais pas dans une URI : expo-file-system construit des URI et
+ * rejette ces caractères nus (son `move`/`copy` lèvent IllegalArgumentException
+ * hors volumes). Le segment est donc encodé ici, pour tous les appels.
+ */
+export function fichierTransfert(nom: string): File {
+  return new File(`${DOSSIER_TRANSFERT.uri}/${encodeURIComponent(nom)}`);
+}
+
 /** Crée un dossier sans se plaindre s'il existe déjà. */
 export function assurerDossier(dossier: Directory) {
   try {
@@ -51,5 +63,37 @@ export function tailleDe(fichier: File): number {
     return fichier.exists ? (fichier.size ?? 0) : 0;
   } catch {
     return 0;
+  }
+}
+
+/**
+ * Lit le texte d'un petit fichier du dossier documents, ou "" s'il manque.
+ *
+ * Une trace de reprise ne doit jamais faire crasher son lecteur : toute lecture
+ * qui échoue rend simplement le contenu vide.
+ */
+export function lireTexteDocument(nom: string): string {
+  try {
+    const fichier = new File(Paths.document, nom);
+    return fichier.exists ? fichier.textSync() : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Écrit un texte dans un petit fichier du dossier documents.
+ *
+ * Le fichier est créé s'il n'existe pas. Une écriture qui échoue (disque
+ * saturé, droits) est silencieuse : une trace de reprise manquante ne doit
+ * jamais faire échouer un téléchargement en cours.
+ */
+export function ecrireTexteDocument(nom: string, contenu: string) {
+  try {
+    const fichier = new File(Paths.document, nom);
+    if (!fichier.exists) fichier.create({ intermediates: true, overwrite: true });
+    fichier.write(contenu);
+  } catch {
+    // la persistance est un filet de sécurité, pas un contrat du transfert
   }
 }

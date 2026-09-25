@@ -1,6 +1,7 @@
 /** Petites pièces d'interface communes, taillées sur la maquette. */
 import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState, useRef, type ReactNode } from "react";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   ActivityIndicator,
   Animated,
@@ -31,13 +32,22 @@ const COURBE = Easing.bezier(ease[0], ease[1], ease[2], ease[3]) as EasingFuncti
  * quelqu'un qui a déjà ouvert l'app. Ce qui compte, c'est où l'on est et ce que
  * l'écran contient (« Bibliothèque · 24 titres »).
  */
-export function EnTeteEcran({ titre, meta }: { titre: string; meta?: string }) {
+export function EnTeteEcran({
+  titre,
+  meta,
+  action,
+}: {
+  titre: string;
+  meta?: string;
+  /** Une commande à droite du titre, à la place du compteur (ex. lecture unifiée). */
+  action?: ReactNode;
+}) {
   return (
     <View style={styles.entete}>
       <Text style={styles.enteteTitre} numberOfLines={1}>
         {titre}
       </Text>
-      {meta ? <Text style={styles.enteteMeta}>{meta}</Text> : null}
+      {action ?? (meta ? <Text style={styles.enteteMeta}>{meta}</Text> : null)}
     </View>
   );
 }
@@ -582,24 +592,36 @@ export function Feuille({
   action?: ReactNode;
   children: ReactNode;
 }) {
+  // La feuille est ancrée en bas : sans l'inset, son contenu passe sous la
+  // barre de gestes sur les appareils en navigation gestuelle (edge-to-edge).
+  // Le garde Math.max conserve un coussin minimal si l'inset est nul.
+  const insets = useSafeAreaInsets();
   return (
     <Modal
       visible={visible}
       transparent
       animationType="slide"
       onRequestClose={onFermer}
+      // `statusBarTranslucent` seul. Ajouter `navigationBarTranslucent` ferait
+      // passer la fenêtre sous les barres système (edge-to-edge) et, du même
+      // coup, le clavier ne rétrécirait plus la fenêtre du dialogue — c'est
+      // pourtant ce rétrécissement qui fait remonter la feuille quand un champ
+      // prend le focus. La barre sombre, elle, vient du thème natif
+      // (styles.xml), qui n'a pas besoin d'edge-to-edge.
       statusBarTranslucent
     >
-      {/* Sur iOS la feuille est ancrée en bas : sans cette enveloppe, le clavier
-          la recouvre quand un champ prend le focus. Sur Android un Modal ne
-          suit pas le redimensionnement de la fenêtre (adjustResize) : il faut
-          le comportement hauteur pour le lever explicitement. */}
+      {/* Sur iOS la feuille est ancrée en bas : sans cette enveloppe, le
+          clavier la recouvre quand un champ prend le focus. Sur Android, c'est
+          le rétrécissement de la fenêtre du dialogue (ADJUST_RESIZE, posé par
+          React Native sur le Modal) qui la fait remonter — les événements
+          clavier de React Native viennent de la fenêtre de l'activité, pas de
+          celle de la modale. */}
       <KeyboardAvoidingView
         style={styles.feuillePorte}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         <Pressable style={styles.scrim} onPress={onFermer} accessibilityLabel="Fermer" />
-        <View style={styles.feuille}>
+        <View style={[styles.feuille, { paddingBottom: Math.max(20, insets.bottom) }]}>
           <View style={styles.poignee} />
           <View style={styles.feuilleTete}>
             <View style={styles.feuilleTextes}>
@@ -795,7 +817,10 @@ const styles = StyleSheet.create({
   etapeTexte: { fontSize: 13, lineHeight: 18, fontWeight: "500", color: colors.ink2, flex: 1 },
 
   // --- Feuille ---
-  scrim: { flex: 1, backgroundColor: colors.scrim },
+  // Le voile assombrit ce que la feuille recouvre : sans lui, une page web
+  // claire devient le fond de la modale. Le Pressable du même style reste :
+  // c'est lui qui referme la feuille au tap à côté.
+  scrim: { flex: 1, backgroundColor: colors.voileModale },
   feuillePorte: { flex: 1 },
   feuille: {
     backgroundColor: colors.surface,
@@ -803,7 +828,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: radius.lg,
     borderWidth: 1,
     borderBottomWidth: 0,
-    borderColor: colors.borderFort,
+    borderColor: colors.borderModale,
     padding: space.lg,
     paddingBottom: 20,
     gap: space.md,

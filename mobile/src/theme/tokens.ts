@@ -25,9 +25,28 @@ export const colors = {
   border: "rgba(255,255,255,0.08)",
   /** Bordure des surfaces qui doivent se détacher : capsule de nav, feuille, mini-lecteur. */
   borderFort: "rgba(255,255,255,0.14)",
+  /**
+   * Contour d'une modale, opaque.
+   *
+   * `borderFort` est translucide : c'est ce qu'il faut sur une surface de l'app,
+   * jamais sur une modale, qui flotte au-dessus de n'importe quoi. Au-dessus du
+   * navigateur, la page passe au travers du trait — une page blanche se lit dans
+   * le contour d'une feuille sombre. C'est le même gris, aplati sur `surface`
+   * (14 % de blanc sur #1a1f2a), donc le trait garde son rendu et ne laisse plus
+   * rien voir.
+   */
+  borderModale: "#3a3e48",
+  /**
+   * Voile posé derrière une modale.
+   *
+   * Sans lui, la modale n'a plus de fond du tout : au-dessus du navigateur,
+   * une page web claire occupe alors tout l'écran et la feuille semble posée
+   * sur rien. Franc plutôt que léger : un voile à 30 % sur du blanc se lit
+   * comme un gris délavé, pas comme un fond sombre.
+   */
+  voileModale: "rgba(8,11,15,0.65)",
   /** Fond des boutons fantômes et des pastilles neutres. */
   voileClair: "rgba(255,255,255,0.06)",
-  scrim: "rgba(0,0,0,0.62)",
   ok: "#2ed9a8",
   warn: "#ffb020",
   danger: "#ff6b6b",

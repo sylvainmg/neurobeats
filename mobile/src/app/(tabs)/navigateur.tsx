@@ -12,7 +12,7 @@
  * la fonctionnalité ne doit pas dépendre d'une page qui refuserait le script.
  */
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Animated,
   Pressable,
@@ -42,11 +42,52 @@ import {
   IconCloudDown,
   IconNavigateur,
   IconPlus,
+  IconPlay,
+  IconSearch,
 } from "@/ui/icons";
 import { Vignette } from "@/ui/vignette";
 import { colors, radius, space, touch, type as typo } from "@/theme/tokens";
 
-const ACCUEIL = "https://www.youtube.com";
+/**
+ * Le mini-navigateur s'ouvre vide : la WebView ne naît qu'à la première
+ * adresse. Charger l'accueil d'un site au montage coutait cher à l'ouverture
+ * de l'onglet (la page lourde se construisait à chaque premier affichage) et
+ * gardait une page en fond ensuite. Le traqueur de lecture est générique : il
+ * s'attache a n'importe quel element <video>/<audio>, rien ne depend du site.
+ */
+
+/**
+ * Raccourci de l'écran vide : une destination tapée d'un pouce. La carte ne
+ * connaît pas la navigation, elle ne fait que la déclencher — le libellé et la
+ * promesse restent à l'écran.
+ */
+function CarteDestination({
+  libelle,
+  sousTitre,
+  icone,
+  surAppui,
+}: {
+  libelle: string;
+  sousTitre: string;
+  icone: ReactNode;
+  surAppui: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Aller sur ${libelle}`}
+      onPress={surAppui}
+      style={({ pressed }) => [styles.destination, pressed && styles.pressions]}
+    >
+      <View style={styles.destinationMarque}>{icone}</View>
+      <View style={styles.destinationTextes}>
+        <Text style={styles.destinationTitre}>{libelle}</Text>
+        <Text style={styles.destinationSousTitre}>{sousTitre}</Text>
+      </View>
+      <IconChevronRight size={18} color={colors.ink2} />
+    </Pressable>
+  );
+}
 
 export default function Navigateur() {
   const router = useRouter();
@@ -60,9 +101,9 @@ export default function Navigateur() {
   const mini = useLecture((etat) => etat.file.length > 0);
   const { ouvrir: ouvrirDialogue, element: dialogue } = useDialogue();
 
-  const [saisie, setSaisie] = useState(ACCUEIL);
+  const [saisie, setSaisie] = useState("");
   const [chargee, setChargee] = useState("");
-  const [enChargement, setEnChargement] = useState(true);
+  const [enChargement, setEnChargement] = useState(false);
   const [peutAllerArriere, setPeutAllerArriere] = useState(false);
   const [peutAllerAvant, setPeutAllerAvant] = useState(false);
   /** Le traqueur a-t-il déjà parlé ? Tant que non, l'URL suffit (repli). */
@@ -75,12 +116,6 @@ export default function Navigateur() {
 
   const videoId = videoIdDepuisUrl(chargee);
   const proposeLeBouton = Boolean(videoId) && (lectureDetectee || !traqueurVivant);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!chargee) setSaisie(ACCUEIL);
-    }, [chargee]),
-  );
 
   // Cycle de vie de l'écran : au retour, on réveille le traqueur (la page est
   // toujours là) ; en partant, on met le média en pause — l'onglet quitté ne
@@ -156,49 +191,72 @@ export default function Navigateur() {
           accessibilityLabel="Adresse du navigateur"
           style={styles.champ}
         />
-        {enChargement || enPreparation || transfertsActifs > 0 ? (
-          <View style={styles.spin}>
-            <Spinner taille={18} couleur={colors.ink2} />
-          </View>
-        ) : (
-          <Commande libelle="Recharger la page" onPress={() => webview.current?.reload()}>
-            <IconNavigateur size={18} color={colors.ink2} />
-          </Commande>
-        )}
+        {chargee ? (
+          enChargement || enPreparation || transfertsActifs > 0 ? (
+            <View style={styles.spin}>
+              <Spinner taille={18} couleur={colors.ink2} />
+            </View>
+          ) : (
+            <Commande libelle="Recharger la page" onPress={() => webview.current?.reload()}>
+              <IconNavigateur size={18} color={colors.ink2} />
+            </Commande>
+          )
+        ) : null}
       </View>
 
-      <WebView
-        ref={webview}
-        source={{ uri: chargee || ACCUEIL }}
-        style={styles.page}
-        javaScriptEnabled
-        domStorageEnabled
-        allowsInlineMediaPlayback
-        mediaPlaybackRequiresUserAction={false}
-        startInLoadingState
-        injectedJavaScriptBeforeContentLoaded={TRAQUEUR_JS}
-        onMessage={surMessage}
-        onLoadStart={(avant) => {
-          setEnChargement(true);
-          // Une nouvelle page est une nouvelle histoire : la lecture détectée
-          // sur la précédente ne s'applique plus.
-          const nouvelId = videoIdDepuisUrl(avant.nativeEvent.url);
-          if (nouvelId !== videoId) {
-            setLectureDetectee(false);
-            setTraqueurVivant(false);
-          }
-        }}
-        onNavigationStateChange={(etat) => {
-          setEnChargement(etat.loading);
-          setPeutAllerArriere(etat.canGoBack ?? false);
-          setPeutAllerAvant(etat.canGoForward ?? false);
-          if (etat.url) setChargee(etat.url);
-          // Le player YouTube se monte après le chargement : on réinjecte le
-          // traqueur sur la page courante, au cas où l'injection initiale n'a
-          // rien attrapé. Le garde interne rend l'opération idempotente.
-          webview.current?.injectJavaScript(TRAQUEUR_JS);
-        }}
-      />
+      {chargee ? (
+        <WebView
+          ref={webview}
+          source={{ uri: chargee }}
+          style={styles.page}
+          javaScriptEnabled
+          domStorageEnabled
+          allowsInlineMediaPlayback
+          mediaPlaybackRequiresUserAction={false}
+          startInLoadingState
+          injectedJavaScriptBeforeContentLoaded={TRAQUEUR_JS}
+          onMessage={surMessage}
+          onLoadStart={(avant) => {
+            setEnChargement(true);
+            // Une nouvelle page est une nouvelle histoire : la lecture détectée
+            // sur la précédente ne s'applique plus.
+            const nouvelId = videoIdDepuisUrl(avant.nativeEvent.url);
+            if (nouvelId !== videoId) {
+              setLectureDetectee(false);
+              setTraqueurVivant(false);
+            }
+          }}
+          onNavigationStateChange={(etat) => {
+            setEnChargement(etat.loading);
+            setPeutAllerArriere(etat.canGoBack ?? false);
+            setPeutAllerAvant(etat.canGoForward ?? false);
+            if (etat.url) setChargee(etat.url);
+            // Le player YouTube se monte après le chargement : on réinjecte le
+            // traqueur sur la page courante, au cas où l'injection initiale n'a
+            // rien attrapé. Le garde interne rend l'opération idempotente.
+            webview.current?.injectJavaScript(TRAQUEUR_JS);
+          }}
+        />
+      ) : (
+        <View style={styles.vide}>
+          <View style={styles.videMarque}>
+            <IconNavigateur size={30} color={colors.ink2} />
+          </View>
+          <Text style={styles.videTitre}>Aucune page ouverte</Text>
+          <Text style={styles.videTexte}>
+            Tape une adresse ou colle un lien : dès que la page joue une vidéo, le bouton «
+            Télécharger l’audio » apparaît.
+          </Text>
+          <View style={styles.destinations}>
+            <CarteDestination
+              libelle="YouTube"
+              sousTitre="Regarder, écouter, télécharger"
+              icone={<IconPlay size={22} color={colors.ink} />}
+              surAppui={() => aller("https://www.youtube.com")}
+            />
+          </View>
+        </View>
+      )}
 
       {proposeLeBouton && videoId ? (
         <BoutonAudio
@@ -371,6 +429,8 @@ function FeuilleTelechargement({
   const [enExtraction, setEnExtraction] = useState(false);
   const [locales, setLocales] = useState<Playlist[]>([]);
   const [choisie, setChoisie] = useState<string | null>(null);
+  /** Filtre de la liste des playlists : une longue liste se cherche. */
+  const [filtre, setFiltre] = useState("");
   const [nouveauNom, setNouveauNom] = useState(false);
   const [nouvelle, setNouvelle] = useState("");
 
@@ -385,6 +445,7 @@ function FeuilleTelechargement({
     setErreur(null);
     setEnExtraction(true);
     setChoisie(null);
+    setFiltre("");
     setNouveauNom(false);
     setNouvelle("");
   }
@@ -420,7 +481,31 @@ function FeuilleTelechargement({
   // la barre d'adresse s'arrêter même si l'extraction répond après le départ.
   }, [visible, videoId, onPreparationChange]);
 
+  const terme = filtre.trim().toLowerCase();
+  const visibles = terme
+    ? locales.filter((playlist) => playlist.nom.toLowerCase().includes(terme))
+    : locales;
+
   const pret = Boolean(info && (choisie || (nouveauNom && nouvelle.trim())));
+
+  /**
+   * Le filtre et la sélection avancent ensemble.
+   *
+   * Laisser la sélection sur une playlist que le filtre vient de cacher ferait
+   * partir le téléchargement vers une cible invisible : la sélection retombe
+   * donc sur la première ligne encore visible.
+   */
+  const filtrer = (texte: string) => {
+    setFiltre(texte);
+    if (nouveauNom) return;
+    const cherche = texte.trim().toLowerCase();
+    const restants = cherche
+      ? locales.filter((playlist) => playlist.nom.toLowerCase().includes(cherche))
+      : locales;
+    if (!restants.some((playlist) => playlist.playlist_id === choisie)) {
+      setChoisie(restants[0]?.playlist_id ?? null);
+    }
+  };
 
   const confirmer = () => {
     if (!info || !videoId || !pret) return;
@@ -491,7 +576,34 @@ function FeuilleTelechargement({
         ) : null}
 
         <TitreSection texte="Télécharger dans" style={styles.libelle} />
-        {locales.map((playlist) => {
+        {/* Le filtre n'apparaît que sur une longue liste : sous trois
+            playlists, il prendrait plus de place qu'il n'en ferait gagner. */}
+        {locales.length > 3 ? (
+          <View style={styles.recherche}>
+            <IconSearch size={16} color={colors.ink2} />
+            <TextInput
+              value={filtre}
+              onChangeText={filtrer}
+              placeholder="Rechercher une playlist"
+              placeholderTextColor={colors.ink3}
+              style={styles.rechercheChamp}
+              accessibilityLabel="Rechercher une playlist"
+              returnKeyType="search"
+            />
+            {filtre ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Effacer la recherche"
+                onPress={() => filtrer("")}
+                hitSlop={6}
+                style={({ pressed }) => [pressed && styles.pressions]}
+              >
+                <IconClose size={16} color={colors.ink2} />
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+        {visibles.map((playlist) => {
           const active = !nouveauNom && choisie === playlist.playlist_id;
           return (
             <Pressable
@@ -550,6 +662,9 @@ function FeuilleTelechargement({
             Aucune playlist créée sur le téléphone pour l’instant. Crées-en une juste dessus.
           </Text>
         ) : null}
+        {locales.length > 0 && visibles.length === 0 && !nouveauNom ? (
+          <Text style={styles.aucune}>Aucune playlist ne correspond à cette recherche.</Text>
+        ) : null}
 
         {enExtraction || erreur ? null : (
           <Bouton
@@ -599,6 +714,66 @@ const styles = StyleSheet.create({
   },
   spin: { width: touch.min, height: touch.min, alignItems: "center", justifyContent: "center" },
   page: { flex: 1, backgroundColor: colors.canvas },
+
+  // --- Aucune page ouverte ---
+  vide: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 14,
+    paddingHorizontal: space.xl,
+    paddingVertical: space.xxl,
+  },
+  videMarque: {
+    width: 62,
+    height: 62,
+    borderRadius: radius.lg,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 6,
+  },
+  videTitre: { ...typo.vide, color: colors.ink, textAlign: "center" },
+  videTexte: {
+    fontSize: 13.5,
+    lineHeight: 19,
+    fontWeight: "500",
+    color: colors.ink2,
+    textAlign: "center",
+    maxWidth: 300,
+  },
+  destinations: {
+    width: "100%",
+    maxWidth: 320,
+    gap: 10,
+    marginTop: 6,
+  },
+  destination: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  destinationMarque: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.canvas,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  destinationTextes: { flex: 1, gap: 1 },
+  destinationTitre: { ...typo.valeur, color: colors.ink },
+  destinationSousTitre: { ...typo.caption, color: colors.ink2 },
   pressions: { opacity: 0.72 },
 
   // --- Bouton flottant ---
@@ -636,6 +811,19 @@ const styles = StyleSheet.create({
   avantTitre: { ...typo.ligne, fontWeight: "700", color: colors.ink },
   avantDetail: { ...typo.caption, color: colors.ink2 },
   libelle: { marginBottom: space.sm },
+  recherche: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface2,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: space.sm,
+  },
+  rechercheChamp: { flex: 1, color: colors.ink, fontSize: 14, padding: 0 },
   choix: {
     flexDirection: "row",
     alignItems: "center",
