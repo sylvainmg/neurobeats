@@ -480,11 +480,15 @@ export default function PagePlaylist() {
           se substitue. La pochette et le nom restent dans l'en-tête, qui est
           l'identité de l'écran ; la recherche n'est qu'un outil.
 
-          Le seuil de 3 titres est le même qu'avant, et il s'applique aux
-          playlists NÉES SUR LE TÉLÉPHONE comme aux autres : une playlist
-          locale s'allonge titre après titre, et le champ doit apparaître dès
-          qu'elle dépasse le seuil, sans rechargement de l'écran. */}
-      {pistes.length > 3 ? (
+          Le seuil est « plus d'un titre », pas « plus de trois » : une
+          recherche qui n'a qu'une ligne à masquer n'apporte rien et n'occupe
+          que de la place. Mais une playlist NÉE SUR LE TÉLÉPHONE commence
+          souvent à un ou deux titres et grossit ensuite — dès qu'elle en a
+          plus d'un, le champ doit être là, sans attendre un rechargement de
+          l'écran. La condition ne dépend que du nombre de titres, jamais de
+          l'origine de la playlist : une locale s'y applique exactement comme
+          une scannée. */}
+      {pistes.length > 1 ? (
         <View style={styles.zoneRecherche}>
           <View style={styles.recherche}>
             <IconSearch size={17} color={colors.ink2} />
