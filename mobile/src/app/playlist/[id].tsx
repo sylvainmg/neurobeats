@@ -23,7 +23,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BackHandler,
   FlatList,
-  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -78,8 +79,6 @@ export default function PagePlaylist() {
   const [pistes, setPistes] = useState<Piste[]>([]);
   /** Filtre local : l'UX d'une longue playlist sans quitter l'écran. */
   const [recherche, setRecherche] = useState("");
-  /** Où le champ de recherche tombe dans la liste : on y amène la vue. */
-  const [positionRecherche, setPositionRecherche] = useState(0);
   const liste = useRef<FlatList<Piste>>(null);
   const [chargé, setChargé] = useState(false);
   const [renommer, setRenommer] = useState(false);
@@ -181,26 +180,6 @@ export default function PagePlaylist() {
 
   const possedees = pistes.filter((piste) => piste.etat === "chez_toi");
   const manquants = pistes.length - possedees.length;
-
-  /**
-   * Ramène le champ de recherche à sa place à chaque ouverture du clavier.
-   *
-   * Le champ vit au bas de l'en-tête (pochette, titre, actions) : sans ce
-   * geste, le clavier s'ouvre juste sur lui et le recouvre. Le déclencheur est
-   * l'apparition du clavier, pas le focus : un champ qui a déjà le focus ne le
-   * reprend pas quand on rouvre le clavier, et la liste restait alors où elle
-   * était — le correctif ne marchait qu'une fois. À chaque fois, la liste
-   * revient donc exactement au même endroit : le champ en haut de la vue.
-   */
-  useEffect(() => {
-    const abonne = Keyboard.addListener("keyboardDidShow", () => {
-      liste.current?.scrollToOffset({
-        offset: positionRecherche,
-        animated: useApp.getState().animations,
-      });
-    });
-    return () => abonne.remove();
-  }, [positionRecherche]);
 
   const recherchePropre = recherche.trim().toLowerCase();
   const visibles = recherchePropre
@@ -435,7 +414,14 @@ export default function PagePlaylist() {
   }
 
   return (
-    <View style={styles.porte}>
+    // Le clavier ne doit pas recouvrir le champ de recherche, désormais posé
+    // hors de la liste. Même règle que dans `Feuille` : `padding` sur iOS où le
+    // clavier flotte par-dessus, RIEN sur Android où la fenêtre se réduit déjà
+    // (ADJUST_RESIZE) et où superposer les deux faisait trembler la feuille.
+    <KeyboardAvoidingView
+      style={styles.porte}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
       <View style={[styles.entete, { paddingTop: insets.top + space.sm }]}>
         {enSelection ? (
           <>
@@ -485,6 +471,46 @@ export default function PagePlaylist() {
           </>
         )}
       </View>
+
+      {/* Le filtre vit HORS de la liste, dans le flux de l'écran.
+          Il était dans le `ListHeaderComponent` : il montait et descendait donc
+          avec le contenu, et son cran de position changeait dès que le nombre
+          de résultats se réduisait — le champ glissait sous le doigt en pleine
+          saisie. Ici il ne peut plus bouger : seule la liste en dessous
+          se substitue. La pochette et le nom restent dans l'en-tête, qui est
+          l'identité de l'écran ; la recherche n'est qu'un outil.
+
+          Le seuil de 3 titres est le même qu'avant, et il s'applique aux
+          playlists NÉES SUR LE TÉLÉPHONE comme aux autres : une playlist
+          locale s'allonge titre après titre, et le champ doit apparaître dès
+          qu'elle dépasse le seuil, sans rechargement de l'écran. */}
+      {pistes.length > 3 ? (
+        <View style={styles.zoneRecherche}>
+          <View style={styles.recherche}>
+            <IconSearch size={17} color={colors.ink2} />
+            <TextInput
+              value={recherche}
+              onChangeText={setRecherche}
+              placeholder="Rechercher dans cette playlist"
+              placeholderTextColor={colors.ink3}
+              style={styles.champ}
+              accessibilityLabel="Rechercher dans cette playlist"
+              returnKeyType="search"
+            />
+            {recherche ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Effacer la recherche"
+                onPress={() => setRecherche("")}
+                hitSlop={6}
+                style={({ pressed }) => [pressed && styles.retourPresse]}
+              >
+                <IconClose size={17} color={colors.ink2} />
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
 
       <FlatList
         ref={liste}
@@ -593,36 +619,6 @@ export default function PagePlaylist() {
                 Reprends le téléchargement des titres manquants.
               </Text>
             ) : null}
-            {/* Le filtre vit sous les actions : la pochette et le nom restent
-                l'identité de l'écran, la recherche n'est qu'un outil. */}
-            {pistes.length > 3 ? (
-              <View
-                style={styles.recherche}
-                onLayout={(e) => setPositionRecherche(e.nativeEvent.layout.y)}
-              >
-                <IconSearch size={17} color={colors.ink2} />
-                <TextInput
-                  value={recherche}
-                  onChangeText={setRecherche}
-                  placeholder="Rechercher dans cette playlist"
-                  placeholderTextColor={colors.ink3}
-                  style={styles.champ}
-                  accessibilityLabel="Rechercher dans cette playlist"
-                  returnKeyType="search"
-                />
-                {recherche ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Effacer la recherche"
-                    onPress={() => setRecherche("")}
-                    hitSlop={6}
-                    style={({ pressed }) => [pressed && styles.retourPresse]}
-                  >
-                    <IconClose size={17} color={colors.ink2} />
-                  </Pressable>
-                ) : null}
-              </View>
-            ) : null}
           </View>
         }
         ListEmptyComponent={
@@ -695,7 +691,7 @@ export default function PagePlaylist() {
         }}
       />
       {dialogue}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -757,11 +753,16 @@ const styles = StyleSheet.create({
     ...ombre.pochette,
   },
   centre: { textAlign: "center" },
+  // La zone du champ est un bloc à part entière : elle porte les marges
+  // latérales de l'écran et l'espace qui sépare le champ de l'en-tête. C'est
+  // cette séparation, et non le champ lui-même, qui garantit qu'il occupe
+  // toujours la même place, quels que soient les résultats listés en dessous.
+  zoneRecherche: { paddingHorizontal: space.lg, flexShrink: 0 },
   recherche: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginTop: space.sm,
+    marginBottom: space.sm,
     paddingHorizontal: 15,
     paddingVertical: 11,
     borderRadius: radius.pill,

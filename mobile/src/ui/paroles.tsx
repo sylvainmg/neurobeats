@@ -12,7 +12,7 @@
  * son pouce, ce qui est le pire moment pour lire des paroles.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { useLecture } from "@/playback/store";
 import { useApp } from "@/state/app";
@@ -169,53 +169,78 @@ export function FeuilleParoles({ visible, onFermer }: { visible: boolean; onFerm
           <Text style={styles.vide}>
             Lance un titre pour voir ses paroles.
           </Text>
-        ) : chargement ? (
-          <Text style={styles.vide}>Chargement des paroles…</Text>
         ) : lignes.length > 0 ? (
-          <>
-            <Text style={styles.titre}>{piste.titre}</Text>
-            <Text style={styles.chaine}>{piste.chaine}</Text>
-            <Separateur />
-            {lignes.map((parole, i) => (
-              <Text
-                key={`${i}-${parole.text.slice(0, 12)}`}
-                style={[styles.ligne, i === ligne && styles.ligneActive]}
-                onPress={() => {
-                  // Un appui sur une parole déplace la lecture : même contrat que
-                  // sur le web, où le tapositionne.
-                  void seekToParole(parole, piste.duree || duree);
-                }}
-              >
-                {parole.text}
-              </Text>
-            ))}
-            {/* La source n'est pas synchronisée (Genius renvoie du texte) : on
-                le dit, sinon l'utilisateur croit à un décalage réel. */}
-            {paroles && !paroles.synced ? (
-              <Text style={styles.note}>
-                Paroles non synchronisées : le défilement est estimé.
-              </Text>
-            ) : null}
-          </>
+          // Un titre précédent peut laisser des paroles d'un autre titre à
+          // l'écran pendant la requête : on ne les montre que si elles
+          // appartiennent bien au titre courant, sinon le panneau clignoterait
+          // d'un texte à l'autre à chaque tick.
+          paroles?.videoId === videoId ? (
+            <>
+              <Text style={styles.titre}>{piste.titre}</Text>
+              <Text style={styles.chaine}>{piste.chaine}</Text>
+              <Separateur />
+              {lignes.map((parole, i) => (
+                <Text
+                  key={`${i}-${parole.text.slice(0, 12)}`}
+                  style={[styles.ligne, i === ligne && styles.ligneActive]}
+                  onPress={() => {
+                    // Un appui sur une parole déplace la lecture : même contrat que
+                    // sur le web, où le tap positionne.
+                    void seekToParole(parole, piste.duree || duree);
+                  }}
+                >
+                  {parole.text}
+                </Text>
+              ))}
+              {/* La source n'est pas synchronisée (texte brut) : on le dit,
+                  sinon l'utilisateur croit à un décalage réel. */}
+              {!paroles?.synced ? (
+                <Text style={styles.note}>
+                  Paroles non synchronisées : le défilement est estimé.
+                </Text>
+              ) : null}
+            </>
+          ) : null
         ) : (
+          /* Le bloc « pas de paroles » reste MONTÉ et REMPLI pendant la requête :
+             seuls ses enfants changent, jamais le conteneur. Le remplacer par un
+             « Chargement… » d'une ligne faisait sauter la feuille d'une
+             demi-seconde à chaque « Réessayer » (règle « Layout / Content
+             Jumping » : un état asynchrone reste dans le même conteneur, aux
+             mêmes dimensions).
+
+             Le bouton reste rendu dans tous les cas — il est simplement
+             désactivé quand il n'a pas d'action possible. Le retirer ferait
+             diminuer la hauteur du bloc ; le laisser actif ferait qu'un appui
+             relance une requête déjà partie. `desactive` règle les deux d'un
+             geste, et l'accessibilité le dit (l'écran lecteur ne propose plus une
+             commande inerte). */
           <View style={styles.videBloc}>
+            <View style={styles.videIndicateur}>
+              {chargement ? <ActivityIndicator size="small" color={colors.accent} /> : null}
+            </View>
             <Text style={styles.videTitre}>
-              {paroles?.instrumental ? "Titre instrumental" : "Paroles indisponibles"}
+              {chargement
+                ? "Recherche des paroles…"
+                : paroles?.instrumental
+                  ? "Titre instrumental"
+                  : "Paroles indisponibles"}
             </Text>
             <Text style={styles.vide}>
-              {erreur ??
-                (base
-                  ? "L'ordinateur n'a trouvé aucune source pour ce titre."
-                  : "Les paroles viennent de l'ordinateur. Scanne son code une fois pour qu'il sache où te les envoyer.")}
+              {chargement
+                ? " "
+                : (erreur ??
+                  (base
+                    ? "L'ordinateur n'a trouvé aucune source pour ce titre."
+                    : "Les paroles viennent de l'ordinateur. Scanne son code une fois pour qu'il sache où te les envoyer."))}
             </Text>
-            {erreur ? (
-              <Bouton
-                titre="Réessayer"
-                variante="fantome"
-                onPress={() => void charger()}
-                style={styles.reessayer}
-              />
-            ) : null}
+            <Bouton
+              titre="Réessayer"
+              variante="fantome"
+              desactive={!erreur || chargement}
+              onPress={() => void charger()}
+              style={styles.reessayer}
+            />
           </View>
         )}
       </ScrollView>
@@ -242,6 +267,9 @@ const styles = StyleSheet.create({
   note: { ...typo.caption, color: colors.ink3, marginTop: space.md, fontStyle: "italic" },
   videBloc: { alignItems: "center", gap: space.sm, paddingVertical: space.xl },
   videTitre: { ...typo.ligne, color: colors.ink, fontWeight: "600", textAlign: "center" },
+  // La place du spinner est TOUJOURS réservée, même quand il est absent : c'est
+  // elle qui ferait sauter le bloc entre « recherche » et « pas de paroles ».
+  videIndicateur: { height: 16, justifyContent: "center" },
   vide: { ...typo.body, color: colors.ink2, textAlign: "center" },
   reessayer: { marginTop: space.sm, alignSelf: "center", minHeight: touch.min },
 });

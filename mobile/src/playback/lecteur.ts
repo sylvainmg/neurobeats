@@ -226,36 +226,74 @@ async function charger(rangVoulu: number, jouerApres = true): Promise<boolean> {
 // Un simple updateLockScreenMetadata, lui, ne touche pas la session.
 let telecommandeActivee = false;
 
+/**
+ * Garde la session média en vie, sans jamais recréer celle qui tient.
+ *
+ * ## Le symptôme
+ *
+ * La notification disparaissait au bout d'un moment : plus de notification,
+ * donc plus de barre de progression, alors que le son jouait toujours. Le
+ * drapeau `telecommandeActivee` en est la cause : une fois la session créée,
+ * plus rien ne la surveillait. Or Android la détruit quand il veut (pression
+ * mémoire, Doze, swipe de l'app). Le drapeau restait nevertheless `true`, et
+ * chaque titre suivant se contentait d'appeler `updateLockScreenMetadata` — sur
+ * une session morte, sans effet.
+ *
+ * ## Pourquoi on ne « teste » pas la session
+ *
+ * Deux raisons, et la seconde est celle qui compte :
+ *
+ * 1. `updateLockScreenMetadata` renvoie `void` et ne lève jamais : un test ne
+ *    dirait rien sur l'état réel de la session.
+ * 2. Rappeler `setActiveForLockScreen` pour « vérifier » tuerait la lecture.
+ *    C'est ce que dit le commentaire plus haut : à la fin naturelle d'un
+ *    morceau, la reconstruction tombe dans le teardown que le système est
+ *    encore en train de faire de l'ancienne session, et lui renvoie un `stop` —
+ *    le titre suivant meurt en silence (NONE à ~340 ms).
+ *
+ * ## Ce qu'on fait à la place
+ *
+ * Le module natif publie déjà l'état de lecture au fil de l'eau (c'est lui qui
+ * fait avancer la progress bar). Il n'a donc rien à lui souffler à chaque
+ * titre : la session se maintient toute seule tant qu'elle existe.
+ *
+ * Reste le cas vrai : la session a été détruite pendant que le drapeau mentait.
+ * On le traite sans le deviner — `arreter()` remet le drapeau à zéro, et le
+ * prochain titre réactive proprement. Une activation qui échoue laisse le
+ * drapeau à `false` : elle sera retérée au titre suivant plutôt que de figer
+ * un état faux.
+ */
+async function assurerTelecommande(piste: PisteLecture): Promise<void> {
+  const metadonnees = {
+    title: piste.titre,
+    artist: piste.chaine,
+    artworkUrl: piste.pochette ?? undefined,
+  };
+  try {
+    if (telecommandeActivee) {
+      // Simple changement de texte : ne touche pas à la session, donc sans
+      // risque pour la lecture en cours.
+      lecteur?.updateLockScreenMetadata(metadonnees);
+      return;
+    }
+    await lecteur?.setActiveForLockScreen(true, metadonnees, {
+      // « Précédent/suivant » : le mode natif n'a pas de concept de file
+      // (elle est tenue en JavaScript), ces boutons remontent donc en
+      // événement, et brancherNavigation() les traduit en mouvement.
+      showSkipPrevious: true,
+      showSkipNext: true,
+    });
+    telecommandeActivee = true;
+  } catch {
+    // Le module ne propose pas les commandes, ou l'activation a échoué : on ne
+    // prétend pas que la session est active, et on réessaiera au titre suivant.
+    telecommandeActivee = false;
+  }
+}
+
 /** Ce que la notification et l'écran verrouillé annoncent. */
 function majTelecommande(piste: PisteLecture) {
-  try {
-    if (!telecommandeActivee) {
-      lecteur?.setActiveForLockScreen(
-        true,
-        {
-          title: piste.titre,
-          artist: piste.chaine,
-          artworkUrl: piste.pochette ?? undefined,
-        },
-        {
-          // « Précédent/suivant » : le mode natif n'a pas de concept de file
-          // (elle est tenue en JavaScript), ces boutons remontent donc en
-          // événement, et brancherNavigation() les traduit en mouvement.
-          showSkipPrevious: true,
-          showSkipNext: true,
-        },
-      );
-      telecommandeActivee = true;
-    } else {
-      lecteur?.updateLockScreenMetadata({
-        title: piste.titre,
-        artist: piste.chaine,
-        artworkUrl: piste.pochette ?? undefined,
-      });
-    }
-  } catch {
-    // sans effet si le module ne propose pas les commandes
-  }
+  void assurerTelecommande(piste);
 }
 
 /** Charge une file et démarre au titre demandé. */

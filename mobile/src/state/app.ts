@@ -20,6 +20,7 @@ import { telechargerPochette } from "@/transfer/covers";
 import { chargerParoles } from "@/transfer/paroles";
 import { demanderNotifications, notificationsAutorisees } from "@/transfer/notifications";
 import { estimerPoids } from "@/transfer/format";
+import { budgetPreparation, fileAAttendre } from "@/transfer/attente";
 import { analyserManifeste, type Manifeste, type PisteManifeste } from "@/transfer/manifest";
 import { adresseSession, lireCode, type Code } from "@/transfer/qr";
 
@@ -259,21 +260,12 @@ function retenirParoles(
  * annonce lui-même un échec, la ligne cesse d'attendre et dit ce qui est arrivé,
  * avec un bouton pour réessayer. Sans ce bornage, une source morte figerait une
  * ligne « en préparation » pour toujours.
- */
-/**
- * Budget d'attente d'une préparation, proportionnel à la durée annoncée.
  *
- * Un forfait fixe de 3 min faisait échouer un titre juste lent : YouTube bride
- * un téléchargement continu (~35 Ko/s mesuré), donc une préparation honnête
- * dépasse souvent ces 3 minutes. On accorde ~1,25 s d'attente par seconde de
- * titre, plancher 90 s, plafond 15 min : une source lente finit son travail,
- * une source morte ne fige toujours pas la ligne.
+ * Le délai lui-même vit dans `@/transfer/attente` : il se mesure sur la place
+ * du titre dans la file, pas sur sa seule durée. Voir ce module pour pourquoi
+ * l'ancien calcul abandonnait les titres d'une longue playlist avant même que
+ * le bureau n'ait eu le temps de les prendre.
  */
-function budgetPreparation(piste: PisteManifeste): number {
-  const parDuree = (piste.duree ?? 0) * 1000 * 1.25;
-  return Math.min(15 * 60_000, Math.max(90_000, 90_000 + parDuree));
-}
-
 /**
  * Rythme du poller : 4 s tant qu'un titre peut encore devenir prêt, 15 s quand
  * seuls des échecs restent — ceux-ci se rattrapent parfois (le bureau finit la
@@ -366,11 +358,19 @@ async function pomperPreparation(code: Code, manifeste: Manifeste, nomLot: strin
     stopperMinuteurPreparation();
     return;
   }
+  // L'attente se calcule sur la PLACE du titre dans la file, pas sur sa seule
+  // durée : le bureau ne prépare que deux titres à la fois, donc un titre en
+  // fin de liste doit attendre son tour avant même d'être pris en main. Avec
+  // l'ancien calcul (durée seule), ces titres étaient abandonnés avant d'avoir
+  // jamais commencé, et il fallait rescanner pour les récupérer.
+  const file = fileAAttendre(manifeste.pistes);
   for (const videoId of [...enAttente.keys()]) {
     const piste = enAttente.get(videoId);
     if (!piste) continue;
     const debut = debuts.get(videoId) ?? maintenant;
-    if (maintenant - debut >= budgetPreparation(piste)) {
+    const position = file.findIndex((autre) => autre.video_id === videoId);
+    const budget = budgetPreparation(piste, file, position < 0 ? 0 : position);
+    if (maintenant - debut >= budget) {
       marquerEchecPreparation(
         videoId,
         "La préparation de ce titre traîne depuis longtemps. La source est peut-être lente ou bloquée : relance-le pour réessayer.",
@@ -438,8 +438,22 @@ function lancerPreparation(code: Code, manifeste: Manifeste, pistes: PisteManife
   arreterPreparation();
   manifesteEnCours = manifeste;
   const maintenant = Date.now();
-  // La session annonce sa vie restante au scan : elle borne toute la garde.
-  finDeVieSession = maintenant + Math.max(60, (manifeste.expire_dans ?? 20 * 60)) * 1000;
+  // La session du bureau expire au bout de `expire_dans` (20 min). Se borner là
+  // abandonnait la file en plein milieu d'une longue playlist : le poller
+  // s'arrêtait, les titres restaient « à récupérer », et l'utilisateur devait
+  // rescanner pour déclencher la suite.
+  //
+  // On donne donc à la garde le temps qu'il FAUT, pas celui qu'il reste de
+  // session : la préparation de toute la file, plus une marge. La session du
+  // bureau se referme d'elle-même côté PC ; le téléphone peut continuer à
+  // interroger l'adresse (le jeton reste valide jusqu'à son expiration propre).
+  const file = fileAAttendre(manifeste.pistes);
+  const besoin = file.reduce(
+    (total, piste, position) =>
+      Math.max(total, budgetPreparation(piste, file, position)),
+    0,
+  );
+  finDeVieSession = maintenant + Math.max(60, manifeste.expire_dans ?? 20 * 60) * 1000 + besoin;
   for (const piste of pistes) {
     // Un échec déjà annoncé par le bureau ne part pas poller pour rien : il
     // s'affiche aussitôt avec sa raison et son bouton « Réessayer », mais la

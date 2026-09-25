@@ -22,6 +22,14 @@ import { DOSSIER_PAROLES, assurerDossier, supprimerFichier, tailleDe } from "@/f
 export type LigneParole = { time: number | null; text: string };
 
 export type Paroles = {
+  /**
+   * Titre auquel ces paroles appartiennent.
+   *
+   * Le panneau s'en sert pour ne pas afficher les paroles d'un titre précédent
+   * pendant la requête du suivant : sans cela, un résultat tardif s'afficherait
+   * sous le mauvais nom, et le contenu clignoterait à chaque changement.
+   */
+  videoId: string;
   found: boolean;
   /** true si les lignes portent un timestamp (mode karaoké). */
   synced: boolean;
@@ -57,9 +65,10 @@ function lire(reponse: Response): Paroles | null {
 }
 
 /** La réponse du bureau, mise en forme pour l'interface (jamais d'exception). */
-function normaliser(brut: Paroles | null): Paroles {
+function normaliser(brut: Paroles | null, videoId: string): Paroles {
   if (!brut) {
     return {
+      videoId,
       found: false,
       synced: false,
       source: null,
@@ -69,6 +78,7 @@ function normaliser(brut: Paroles | null): Paroles {
     };
   }
   return {
+    videoId,
     found: Boolean(brut.found),
     synced: Boolean(brut.synced),
     source: brut.source ?? null,
@@ -95,13 +105,13 @@ export async function chargerParoles(
   const local = fichierDe(videoId);
   if (tailleDe(local) > 0) {
     try {
-      return normaliser(JSON.parse(local.textSync()) as Paroles);
+      return normaliser(JSON.parse(local.textSync()) as Paroles, videoId);
     } catch {
       // Fichier corrompu (interrompu en cours d'écriture) : on le reprend.
       supprimerFichier(local);
     }
   }
-  if (!base || !videoId) return normaliser(null);
+  if (!base || !videoId) return normaliser(null, videoId);
 
   const parametres = new URLSearchParams({ video_id: videoId });
   if (titre) parametres.set("title", titre);
@@ -114,7 +124,7 @@ export async function chargerParoles(
   try {
     const reponse = await fetch(url, { signal: controleur.signal });
     const paroles = lire(reponse);
-    if (!paroles) return normaliser(null);
+    if (!paroles) return normaliser(null, videoId);
     // On ne garde que ce qui se voit : un « pas de paroles » pour ce titre ne
     // mérite pas de fichier, et le backend répondra de la même façon.
     if (paroles.found) {
@@ -123,9 +133,9 @@ export async function chargerParoles(
       if (!destination.exists) destination.create({ intermediates: true, overwrite: true });
       destination.write(JSON.stringify(paroles));
     }
-    return normaliser(paroles);
+    return normaliser(paroles, videoId);
   } catch {
-    return normaliser(null);
+    return normaliser(null, videoId);
   } finally {
     clearTimeout(delai);
   }
