@@ -61,17 +61,18 @@ export default function Transferts() {
 
   const enCours = suivis.filter((suivi) => suivi.etat !== "annule" && suivi.etat !== "termine");
   /**
-   * Ce qui télécharge vraiment.
+   * Ce qui télécharge vraiment, et ce qui attend son tour.
    *
    * Un titre terminé n'est plus « en cours » — il n'a plus rien à recevoir —, et
-   * un titre en pause ou en échec non plus. Compter les arrivés gonflait le
-   * chiffre (« 29 sur 30 ») et faisait passer toute une session pour un lot en
-   * cours. L'état ne dit donc que ce qui reçoit des octets maintenant : le
-   * reste est dans la liste, avec son propre état, pas dans le total.
+   * un titre en pause ou en échec non plus. Un direct, lui, attend dans la file
+   * (une extraction à la fois) : il est « en attente », pas « en cours ». Le
+   * chiffre annoncé dit donc exactement ce qui parle au réseau maintenant.
    */
   const actifs = enCours.filter(
     (suivi) => suivi.etat === "en_cours" || suivi.etat === "en_file",
   );
+  const telechargent = actifs.filter((suivi) => suivi.etat === "en_cours");
+  const attendent = actifs.length - telechargent.length;
   const recus = actifs.reduce((total, suivi) => total + suivi.recus, 0);
   const poidsTotal = actifs.reduce((total, suivi) => total + (suivi.total || 0), 0);
   const lignes: Ligne[] = [
@@ -112,10 +113,12 @@ export default function Transferts() {
               <Text style={styles.totalChiffre}>
                 {formaterPourcent(poidsTotal > 0 ? recus / poidsTotal : 0)}
               </Text>
-              {/* Le nombre de titres qui téléchargent, pas un total de session :
-                  « 29 sur 30 » comptait les titres déjà arrivés. */}
+              {/* Ce qui parle au réseau, et ce qui fait la queue derrière : les
+                  deux nombres sont vrais, aucun ne compte ce qui est arrivé. */}
               <Text style={styles.totalDetail}>
-                {`${pluraliser(actifs.length, "titre")} en cours`}
+                {attendent > 0
+                  ? `${pluraliser(telechargent.length, "titre")} en cours · ${pluraliser(attendent, "titre")} en attente`
+                  : `${pluraliser(telechargent.length, "titre")} en cours`}
               </Text>
             </View>
             <BarreDeProgression

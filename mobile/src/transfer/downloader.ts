@@ -86,6 +86,18 @@ function estPanneTransitoire(erreur: unknown): boolean {
 }
 
 /**
+ * Veille de la file des téléchargements directs.
+ *
+ * Une extraction yt-dlp est parfois lente (résolution, défi EJS) : on laisse
+ * deux minutes sans le moindre signe — état annoncé ou octets reçus — avant de
+ * la tenir pour morte. C'est la contrepartie de la sérialisation : à un seul
+ * direct à la fois, une tâche muette figerait toute la file au lieu de la
+ * ralentir.
+ */
+const VEILLE_DIRECT_MS = 15_000;
+const DELAI_DIRECT_MUET_MS = 120_000;
+
+/**
  * En-têtes des téléchargements JavaScript vers les flux vidéo : YouTube sert
  * ses fichiers (googlevideo) selon qui les demande, et un client sans
  * User-Agent ni Referer y essuie souvent un 403. Le module yt-dlp n'expose pas
@@ -142,6 +154,25 @@ export class Gestionnaire {
   private relances = new Map<string, { essai: number; prochain: number }>();
   /** Minuteurs de relance des directs, pour les effacer si l'on veut tenter neuf. */
   private relancesDirects = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Titres directs qui attendent leur tour : une extraction à la fois. */
+  private fileDirecte: Spec[] = [];
+  /** Le direct que le moteur traite en ce moment, s'il y en a un. */
+  private directEnCours: string | null = null;
+  /** Dernier signe de vie de chaque direct (état annoncé ou octets reçus). */
+  private signesDirects = new Map<string, number>();
+  /** Directs abandonnés par la veille : leur motif d'échec est déjà posé. */
+  private muets = new Set<string>();
+  /**
+   * Titres dont la possession est déjà écrite en base.
+   *
+   * Un suivi achevé reste en mémoire (l'écran en a besoin pour son compte), mais
+   * sa possession ne doit être écrite qu'une fois : sans ce garde, un titre
+   * retiré du téléphone était re-marqué « chez toi » à la seconde suivante, avec
+   * son ancienne URI — le retrait semblait n'avoir rien fait.
+   */
+  private possessionsEcrites = new Set<string>();
+  /** Veille sur la file : un direct muet ne doit pas la figer pour toujours. */
+  private veilleDirect: ReturnType<typeof setInterval> | null = null;
   private options: Options = { wifiUniquement: true };
   /** Vrai quand le système a refusé : on télécharge alors nous-mêmes. */
   private modeSecours = false;
@@ -166,6 +197,22 @@ export class Gestionnaire {
     return this.specs.get(videoId)?.titre ?? this.titres.get(videoId) ?? videoId;
   }
 
+  /** La possession de ce titre est-elle déjà écrite en base ? */
+  possessionEcrite(videoId: string): boolean {
+    return this.possessionsEcrites.has(videoId);
+  }
+
+  /**
+   * Marque la possession comme écrite.
+   *
+   * Appelé après l'enregistrement en base : un suivi achevé ne doit plus la
+   * réécrire, sinon un titre retiré du téléphone reviendrait « chez toi » tout
+   * seul. Un nouveau transfert du même titre efface la marque (voir `enFile`).
+   */
+  marquerPossessionEcrite(videoId: string) {
+    this.possessionsEcrites.add(videoId);
+  }
+
   /**
    * Confie un ensemble de transferts.
    *
@@ -187,6 +234,9 @@ export class Gestionnaire {
       // Une demande nouveau jeu : ni annulation passée, ni relance à reprendre.
       this.annulations.delete(spec.videoId);
       this.relances.delete(spec.videoId);
+      // Un nouveau transfert devra réécrire sa possession, même si un précédent
+      // l'avait déjà fait (titre retiré puis retéléchargé).
+      this.possessionsEcrites.delete(spec.videoId);
       // La marque « direct » suit le titre tant qu'il vit dans la tâche
       // JavaScript ; un retour dans le circuit du système (import depuis
       // l'ordinateur) la lave, sinon ses boutons Relancer/Arrêter passeraient
@@ -195,9 +245,9 @@ export class Gestionnaire {
       else this.directs.delete(spec.videoId);
       this.suivis.set(spec.videoId, {
         videoId: spec.videoId,
-        // Un direct démarre tout de suite : pas de ligne « en attente », même
-        // le temps d'un rendu.
-        etat: direct ? "en_cours" : "en_file",
+        // Un direct attend son tour dans la file : il est « en file » tant que
+        // le moteur ne l'a pas pris, et le dit honnêtement.
+        etat: "en_file",
         recus: 0,
         total: spec.taille ?? 0,
       });
@@ -207,7 +257,87 @@ export class Gestionnaire {
       void this.confierAuSysteme(specs, nomLot);
       return;
     }
+    if (direct) {
+      // Un direct à la fois : le moteur, lui, n'a aucune limite — il exécute
+      // chaque tâche dans son propre thread (`Executors.newCachedThreadPool`).
+      // Vingt-huit extractions Python en parallèle font limiter YouTube (403,
+      // 429) et échouer la moitié du lot ; mises à la queue leu leu, elles
+      // passent. C'est la différence entre « reprendre trois fois » et une fois.
+      for (const spec of specs) this.mettreEnFileDirecte(spec);
+      return;
+    }
     for (const spec of specs) void this.enJavaScript(spec);
+  }
+
+  /** Ajoute un direct à la file d'attente, s'il n'y est pas déjà. */
+  private mettreEnFileDirecte(spec: Spec) {
+    if (this.directEnCours === spec.videoId) return;
+    if (this.fileDirecte.some((attendu) => attendu.videoId === spec.videoId)) return;
+    this.fileDirecte.push(spec);
+    this.demarrerDirectSuivant();
+  }
+
+  /** Lance le prochain direct de la file — un seul parle au moteur à la fois. */
+  private demarrerDirectSuivant() {
+    if (this.directEnCours) return;
+    let spec = this.fileDirecte.shift();
+    // Un titre annulé pendant son attente ne part pas.
+    while (spec && this.annulations.has(spec.videoId)) spec = this.fileDirecte.shift();
+    if (!spec) {
+      this.arreterVeilleDirect();
+      return;
+    }
+    this.directEnCours = spec.videoId;
+    this.signeDirect(spec.videoId);
+    this.demarrerVeilleDirect();
+    void this.enJavaScript(spec).finally(() => {
+      if (this.directEnCours === spec.videoId) this.directEnCours = null;
+      this.demarrerDirectSuivant();
+    });
+  }
+
+  /** Note que le direct en cours donne signe de vie (état ou octets reçus). */
+  private signeDirect(videoId: string) {
+    this.signesDirects.set(videoId, Date.now());
+  }
+
+  private demarrerVeilleDirect() {
+    if (this.veilleDirect) return;
+    this.veilleDirect = setInterval(() => this.verifierDirectVivant(), VEILLE_DIRECT_MS);
+  }
+
+  private arreterVeilleDirect() {
+    if (this.veilleDirect) clearInterval(this.veilleDirect);
+    this.veilleDirect = null;
+  }
+
+  /**
+   * Un direct qui ne donne plus signe de vie est un direct mort.
+   *
+   * Sans cette veille, la file attendrait pour toujours un titre que le moteur
+   * a cessé de télécharger (processus tué, thread perdu, tâche muette) : elle
+   * ne rendrait jamais la main. On le déclare en échec — la ligne le dit, le
+   * bouton Réessayer reste à portée — et on libère la place pour le suivant.
+   * La relance automatique, elle, repasse par la file comme tout le reste.
+   */
+  private verifierDirectVivant() {
+    const videoId = this.directEnCours;
+    if (!videoId) return;
+    const signe = this.signesDirects.get(videoId);
+    if (signe === undefined || Date.now() - signe < DELAI_DIRECT_MUET_MS) return;
+    const spec = this.specs.get(videoId);
+    console.warn(`[transfert] direct muet ${videoId} : abandon et relance`);
+    // Le motif posé ici est le bon : la fin de tâche qui suivra l'annulation ne
+    // doit pas le remplacer par « annulé à la demande du module ».
+    this.muets.add(videoId);
+    const idYt = this.tachesYtDlp.get(videoId);
+    if (idYt) {
+      this.tachesYtDlp.delete(videoId);
+      void YtDlp.cancel(idYt);
+    }
+    this.signesDirects.delete(videoId);
+    this.maj(videoId, { etat: "echoue", raison: "Le téléchargement ne progresse plus." });
+    if (spec) this.relancerDirect(spec, new Error("muet"), true);
   }
 
   /**
@@ -338,17 +468,20 @@ export class Gestionnaire {
       let terminee = false;
       const finir = () => {
         this.tachesYtDlp.delete(spec.videoId);
+        this.signesDirects.delete(spec.videoId);
+        this.muets.delete(spec.videoId);
         if (!terminee) {
           terminee = true;
           resoudre();
         }
       };
-      tache.addListener("progress", (progression) =>
+      tache.addListener("progress", (progression) => {
+        this.signeDirect(spec.videoId);
         this.maj(spec.videoId, {
           recus: progression.downloadedBytes ?? 0,
           total: progression.totalBytes || spec.taille || 0,
-        }),
-      );
+        });
+      });
       tache.addListener("completed", (resultat) => {
         finir();
         if (this.annulations.has(spec.videoId)) return;
@@ -362,10 +495,18 @@ export class Gestionnaire {
       // Une annulation demandée par « Annuler » n'est pas une panne : l'état
       // « annule » a déjà été posé par l'appelant, on laisse la promesse finir.
       tache.addListener("state", (etat) => {
-        if (etat.status === "cancelled" && !this.annulations.has(spec.videoId)) {
-          finir();
-          this.echouerTransfert(spec, new Error("Téléchargement annulé à la demande du module."));
-        }
+        // Toute parole du moteur est un signe de vie, y compris pendant
+        // l'extraction : c'est ce qui distingue une tâche lente d'une tâche morte.
+        this.signeDirect(spec.videoId);
+        if (etat.status !== "cancelled") return;
+        // La fin de tâche rend toujours la main : c'est elle qui libère la
+        // place du suivant dans la file.
+        finir();
+        // Le motif, lui, ne s'écrit que si personne d'autre ne l'a déjà dit :
+        // « Arrêter » (l'utilisateur) et la veille (tâche muette) ont posé le
+        // leur, et c'est celui-là qui doit rester à l'écran.
+        if (this.annulations.has(spec.videoId) || this.muets.has(spec.videoId)) return;
+        this.echouerTransfert(spec, new Error("Téléchargement annulé à la demande du module."));
       });
     });
   }
@@ -530,8 +671,8 @@ export class Gestionnaire {
    * pas toujours ces pannes en `NETWORK_ERROR` (un DNS qui ne répond pas sort
    * parfois en `DOWNLOAD_FAILED`), on regarde donc aussi la forme du message.
    */
-  private relancerDirect(spec: Spec, erreur: unknown) {
-    if (!estPanneTransitoire(erreur)) return;
+  private relancerDirect(spec: Spec, erreur: unknown, force = false) {
+    if (!force && !estPanneTransitoire(erreur)) return;
     const essai = this.relances.get(spec.videoId)?.essai ?? 0;
     if (essai >= DELAIS_RELANCE.length) return;
     // Le délai vient du rang d'échec, pas du temps écoulé depuis la relance
@@ -549,11 +690,12 @@ export class Gestionnaire {
       const courant = this.lister().find((suivi) => suivi.videoId === spec.videoId);
       if (!courant || courant.etat !== "echoue") return;
       console.warn(`[transfert] relance auto ${spec.videoId} (essai ${essai + 1})`);
-      // On relance le moteur directement : `reprendre()` effacerait le compteur,
-      // et l'espacement des essais serait perdu — deux pannes de suite ne
-      // doivent pas arriver dos à dos.
+      // La relance repasse par la file : dix titres qui échouent ensemble ne
+      // doivent pas repartir ensemble, c'est justement ce qui les fait échouer.
       const specActuelle = this.specs.get(spec.videoId);
-      if (specActuelle) void this.enDirect(specActuelle);
+      if (!specActuelle) return;
+      this.maj(spec.videoId, { etat: "en_file", recus: 0, raison: undefined });
+      this.mettreEnFileDirecte(specActuelle);
     }, delai);
     this.relancesDirects.set(spec.videoId, minuteur);
   }
@@ -682,12 +824,22 @@ export class Gestionnaire {
       return;
     }
     // Plus rien à reprendre (tâche perdue, échec) : on refait le transfert.
+    // Un direct repasse par la file — trois « Réessayer » d'affilée ne doivent
+    // pas relancer trois extractions en parallèle, c'est ce qui les fait
+    // échouer toutes les trois.
+    if (this.directs.has(videoId)) {
+      this.maj(videoId, { etat: "en_file", recus: 0, raison: undefined });
+      this.mettreEnFileDirecte(spec);
+      return;
+    }
     await this.enJavaScript(spec);
   }
 
   async annuler(videoId: string) {
     this.annulations.add(videoId);
     this.relances.delete(videoId);
+    // Un direct qui attend encore son tour ne partira pas.
+    this.fileDirecte = this.fileDirecte.filter((spec) => spec.videoId !== videoId);
     // Un transfert direct vit dans le moteur yt-dlp ou la tâche JavaScript : le
     // système n'a jamais entendu parler de lui, l'y chercher serait sans effet.
     if (module.transfertPersistant && !this.directs.has(videoId)) {

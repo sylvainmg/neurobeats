@@ -131,6 +131,10 @@ const gestionnaire = new Gestionnaire(
 async function enregistrerTermines(suivis: Suivi[]) {
   for (const suivi of suivis) {
     if (suivi.etat !== "termine" || !suivi.uri) continue;
+    // Sa possession est déjà écrite : la réécrire ferait revenir « chez toi » un
+    // titre que l'utilisateur vient de retirer du téléphone, avec son ancienne
+    // URI. Le suivi achevé reste en mémoire, mais il ne possède plus rien.
+    if (gestionnaire.possessionEcrite(suivi.videoId)) continue;
     // Un même titre peut vivre dans plusieurs playlists : on ne saute la
     // possession que si **toutes** ses lignes portent déjà ce fichier. Regarder
     // une seule ligne (la première trouvée) faisait conclure « déjà servi »
@@ -140,12 +144,16 @@ async function enregistrerTermines(suivis: Suivi[]) {
     const servies =
       lignes.length > 0 &&
       lignes.every((ligne) => ligne.etat === "chez_toi" && ligne.fichier === suivi.uri);
-    if (servies) continue;
+    if (servies) {
+      gestionnaire.marquerPossessionEcrite(suivi.videoId);
+      continue;
+    }
     await repo.marquerPossede(
       suivi.videoId,
       suivi.uri,
       suivi.total || lignes[0]?.taille || 0,
     );
+    gestionnaire.marquerPossessionEcrite(suivi.videoId);
     // Une possession fraîche fait monter le compteur public : les écrans abonnés
     // relisent leur contenu une fois la base réellement mise à jour. Sans cette
     // montée, un écran déjà affiché croirait que le titre manque encore.
