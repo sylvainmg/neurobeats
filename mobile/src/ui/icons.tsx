@@ -73,17 +73,6 @@ export function IconDownloads(props: IconProps) {
   );
 }
 
-/** Import : la flèche qui monte depuis le plateau (opposé de Downloads). */
-export function IconImport(props: IconProps) {
-  return (
-    <Glyph {...props}>
-      <Path d="M12 20V10" />
-      <Path d="m8 14 4-4 4 4" />
-      <Path d="M5 5h14" />
-    </Glyph>
-  );
-}
-
 /**
  * Titre téléchargé en local : le disque avec flèche vers le bas des apps de
  * musique (Spotify, Apple Music). Le disque est rond et plein, la flèche dans
