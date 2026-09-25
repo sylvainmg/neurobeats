@@ -428,9 +428,20 @@ export const useApp = create<Etat>((set, get) => ({
     }
     set({ session: { phase: "lecture" }, bilan: null });
     const adresse = adresseSession(lu.code);
-    const reponse = await fetch(adresse, { headers: { Accept: "application/json" } }).catch(
-      () => null,
-    );
+    // Le réseau peut rester silencieux sans erreur ni refus (hôte éteint, IP
+    // périmée après un DHCP, Wi-Fi isolé) : on borne la tentative pour ne pas
+    // rester sur « Lecture du code… » indéfiniment. Promise.race (et non
+    // AbortController : RN 0.86 ignore l'option signal de fetch) garantit que
+    // la borne s'applique quelle que soit la version de React Native.
+    const TIMEOUT_LECTURE_CODE_MS = 8000;
+    const reponse = await Promise.race([
+      fetch(adresse, { headers: { Accept: "application/json" } }).catch(
+        () => null,
+      ),
+      new Promise<null>((resoudre) =>
+        setTimeout(() => resoudre(null), TIMEOUT_LECTURE_CODE_MS),
+      ),
+    ]);
     // Le réseau est le seul cas où l'on peut affirmer que l'ordinateur est en
     // cause. Un échec plus loin (base illisible) ne doit pas l'accuser à tort :
     // l'import reste possible, seuls les titres déjà présents seront comptés

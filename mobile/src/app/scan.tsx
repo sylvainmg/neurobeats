@@ -12,11 +12,11 @@
  */
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Clipboard from "expo-clipboard";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Linking, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import Svg, { Defs, RadialGradient, Rect, Stop } from "react-native-svg";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useApp } from "@/state/app";
 import { IconChevronLeft, IconCodeQr, IconLampe, IconPaste } from "@/ui/icons";
@@ -26,7 +26,7 @@ import { colors, radius, space, touch, type as typo } from "@/theme/tokens";
 export default function Scanner() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [permission, demanderPermission] = useCameraPermissions();
+  const [permission, demanderPermission, relirePermission] = useCameraPermissions();
   const ouvrirDepuisCode = useApp((etat) => etat.ouvrirDepuisCode);
   const session = useApp((etat) => etat.session);
   const [coller, setColler] = useState(false);
@@ -40,13 +40,18 @@ export default function Scanner() {
     async (brut: string) => {
       if (occupe) return;
       setOccupe(true);
-      const reussi = await ouvrirDepuisCode(brut);
-      setOccupe(false);
-      if (reussi) {
-        router.replace("/import");
-        return;
+      try {
+        const reussi = await ouvrirDepuisCode(brut);
+        if (reussi) {
+          router.replace("/import");
+          return;
+        }
+        dejaLu.current = false;
+      } finally {
+        // Quoi qu'il arrive (échec réseau, exception inattendue), on relâche
+        // l'écran : sinon « Lecture du code… » resterait affiché pour toujours.
+        setOccupe(false);
       }
-      dejaLu.current = false;
     },
     [occupe, ouvrirDepuisCode, router],
   );
@@ -60,114 +65,181 @@ export default function Scanner() {
     [traiter],
   );
 
+  // Au retour sur l'écran, on relit l'état réel de la caméra : une permission
+  // « une seule fois » (Android) est révoquée à la sortie de l'app, et le
+  // hook ne la relirait pas de lui-même à chaque passage.
+  useFocusEffect(
+    useCallback(() => {
+      void relirePermission();
+    }, [relirePermission]),
+  );
+
+  // Une seule demande de permission en vol à la fois : sur Android, le
+  // listener de résultat de ReactActivity est un slot unique — une 2e demande
+  // pendant que la 1re attend écrase le listener et pend indefiniment (cas
+  // observé sur S23/One UI). Le garde-fou de 6 s relâche le verrou même si le
+  // dialogue système ne répond pas, et relit l'état réel pour que l'UI suive.
+  const requeteEnCours = useRef(false);
+  const demanderAcces = useCallback(async () => {
+    if (requeteEnCours.current) return;
+    requeteEnCours.current = true;
+    let debloque = false;
+    const relacher = () => {
+      if (!debloque) {
+        debloque = true;
+        requeteEnCours.current = false;
+      }
+    };
+    const gardeFou = setTimeout(() => {
+      relacher();
+      void relirePermission();
+    }, 6000);
+    try {
+      await demanderPermission();
+    } catch {
+      // La demande peut échouer (dialogue fermé, activité en pause) : la
+      // relance appartient à l'utilisateur, et l'état réel est relu au focus.
+    } finally {
+      clearTimeout(gardeFou);
+      relacher();
+    }
+  }, [demanderPermission, relirePermission]);
+
   const messageErreur = session.phase === "erreur" ? session.message : null;
   const enLecture = session.phase === "lecture" || occupe;
 
   return (
     <View style={styles.porte}>
-      <View style={[styles.entete, { paddingTop: insets.top + space.sm }]}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Revenir à la bibliothèque"
-          onPress={() => router.back()}
-          style={({ pressed }) => [styles.retour, pressed && styles.retourPresse]}
-        >
-          <IconChevronLeft size={24} color={colors.ink} />
-        </Pressable>
-        <Text style={styles.enteteTitre}>Scanner le code</Text>
-        <View style={styles.retour} />
-      </View>
+      {/* Le haut et les côtés sont gérés par le SafeAreaView racine ; le bas
+          revient à l'écran, car l'app est en edge-to-edge (targetSdk 36) : la
+          zone de visée, la copie et le bouton « ressaisir » descendaient sous
+          la barre de gestes sur les appareils à navigation par gestes. */}
+      <SafeAreaView edges={["bottom"]} style={styles.contour}>
+          <View style={[styles.entete, { paddingTop: insets.top + space.sm }]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Revenir à la bibliothèque"
+            onPress={() => router.back()}
+            style={({ pressed }) => [styles.retour, pressed && styles.retourPresse]}
+          >
+            <IconChevronLeft size={24} color={colors.ink} />
+          </Pressable>
+          <Text style={styles.enteteTitre}>Scanner le code</Text>
+          <View style={styles.retour} />
+        </View>
 
-      <View style={styles.corps}>
-        {messageErreur ? (
-          <Bandeau
-            ton="bad"
-            texte={`${messageErreur} Vérifie que NeuroBeats est ouvert sur l'ordinateur, puis ressaisis le code.`}
-          />
-        ) : null}
+        <View style={styles.corps}>
+          {messageErreur ? (
+            <Bandeau
+              ton="bad"
+              texte={`${messageErreur} Vérifie que NeuroBeats est ouvert sur l'ordinateur, puis ressaisis le code.`}
+            />
+          ) : null}
 
-        <View style={styles.cadre}>
-          {permission?.granted ? (
-            <>
-              <CameraView
-                style={StyleSheet.absoluteFill}
-                facing="back"
-                enableTorch={lampe}
-                barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-                onBarcodeScanned={enLecture ? undefined : surLecture}
-                active={!enLecture}
-              />
-              <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
-                <Defs>
-                  <RadialGradient id="halo" cx="50%" cy="42%" r="60%">
-                    <Stop offset="0" stopColor={colors.accent} stopOpacity="0.14" />
-                    <Stop offset="0.7" stopColor={colors.accent} stopOpacity="0" />
-                  </RadialGradient>
-                </Defs>
-                <Rect x="0" y="0" width="100%" height="100%" fill="url(#halo)" />
-              </Svg>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={lampe ? "Éteindre la lampe" : "Allumer la lampe"}
-                accessibilityState={{ selected: lampe }}
-                onPress={() => setLampe((allumee) => !allumee)}
-                style={({ pressed }) => [
-                  styles.lampe,
-                  lampe && styles.lampeAllumee,
-                  pressed && styles.lampePressee,
-                ]}
-              >
-                <IconLampe size={20} color={lampe ? colors.accent : colors.ink} />
-              </Pressable>
-            </>
-          ) : (
-            <EcranVide
-              titre="Caméra non autorisée"
-              explication="Autorise la caméra, ou ressaisis le code que ton ordinateur affiche : la fonction reste entière dans les deux cas."
-              action={
-                permission && !permission.granted ? (
+          <View style={styles.cadre}>
+            {permission?.granted ? (
+              <>
+                <CameraView
+                  style={StyleSheet.absoluteFill}
+                  facing="back"
+                  enableTorch={lampe}
+                  barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+                  onBarcodeScanned={enLecture ? undefined : surLecture}
+                  active={!enLecture}
+                />
+                <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
+                  <Defs>
+                    <RadialGradient id="halo" cx="50%" cy="42%" r="60%">
+                      <Stop offset="0" stopColor={colors.accent} stopOpacity="0.14" />
+                      <Stop offset="0.7" stopColor={colors.accent} stopOpacity="0" />
+                    </RadialGradient>
+                  </Defs>
+                  <Rect x="0" y="0" width="100%" height="100%" fill="url(#halo)" />
+                </Svg>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={lampe ? "Éteindre la lampe" : "Allumer la lampe"}
+                  accessibilityState={{ selected: lampe }}
+                  onPress={() => setLampe((allumee) => !allumee)}
+                  style={({ pressed }) => [
+                    styles.lampe,
+                    lampe && styles.lampeAllumee,
+                    pressed && styles.lampePressee,
+                  ]}
+                >
+                  <IconLampe size={20} color={lampe ? colors.accent : colors.ink} />
+                </Pressable>
+                {/* Cadre de visée et texte guide : utiles seulement caméra allumée.
+                    Rendus sans autorisation, ils chevauchaient le message
+                    « Caméra non autorisée ». Le bouton « Ressaisir » reste
+                    accessible dans l'autre cas. */}
+                <View style={styles.viseur} pointerEvents="none">
+                  <View style={[styles.angle, styles.hg]} />
+                  <View style={[styles.angle, styles.hd]} />
+                  <View style={[styles.angle, styles.bg]} />
+                  <View style={[styles.angle, styles.bd]} />
+                </View>
+
+                <View style={styles.copie} pointerEvents="none">
+                  <Text style={styles.copieTitre}>
+                    {enLecture ? "Lecture du code…" : "Vise le code de la playlist"}
+                  </Text>
+                  <Text style={styles.copieTexte}>
+                    {enLecture
+                      ? "Reste sur le même Wi-Fi que l'ordinateur."
+                      : "Il apparaît dans « Transférer vers le téléphone », et ne vaut que 20 minutes."}
+                  </Text>
+                </View>
+              </>
+            ) : permission ? (
+              <EcranVide
+                titre="Caméra non autorisée"
+                explication="Autorise la caméra, ou ressaisis le code que ton ordinateur affiche : la fonction reste entière dans les deux cas. Choisis « Pendant l'utilisation de l'app » pour que l'accès soit mémorisé."
+                action={
+                  // Le bouton n'apparaît que quand l'état est connu et refusé :
+                  // pendant le GET du premier montage (permission encore nulle)
+                  // on n'affiche rien, sinon le bouton clignoterait alors que
+                  // l'accès est déjà accordé. Si le dialogue système est
+                  // définitivement fermé (canAskAgain false), on va aux réglages.
                   <Bouton
-                    titre="Autoriser la caméra"
-                    onPress={() => void demanderPermission()}
+                    titre={permission.canAskAgain === false ? "Ouvrir les réglages" : "Autoriser la caméra"}
+                    onPress={() => {
+                      if (permission.canAskAgain === false) {
+                        void Linking.openSettings();
+                      } else {
+                        void demanderAcces();
+                      }
+                    }}
                     icone={<IconCodeQr size={18} color={colors.onPrimary} />}
                   />
-                ) : null
-              }
-            />
-          )}
+                }
+              />
+            ) : null}
 
-          <View style={styles.viseur} pointerEvents="none">
-            <View style={[styles.angle, styles.hg]} />
-            <View style={[styles.angle, styles.hd]} />
-            <View style={[styles.angle, styles.bg]} />
-            <View style={[styles.angle, styles.bd]} />
-          </View>
-
-          <View style={styles.copie} pointerEvents="none">
-            <Text style={styles.copieTitre}>
-              {enLecture ? "Lecture du code…" : "Vise le code de la playlist"}
-            </Text>
-            <Text style={styles.copieTexte}>
-              {enLecture
-                ? "Reste sur le même Wi-Fi que l'ordinateur."
-                : "Il apparaît dans « Transférer vers le téléphone », et ne vaut que 5 minutes."}
-            </Text>
-          </View>
-
-          <View style={[styles.bas, { paddingBottom: space.lg }]}>
-            <Bouton
-              titre="Ressaisir un code"
-              variante="fantome"
-              icone={<IconPaste size={17} color={colors.ink} />}
-              onPress={async () => {
-                const contenu = await Clipboard.getStringAsync();
-                if (contenu.trim()) setSaisie(contenu.trim());
-                setColler(true);
-              }}
-            />
+            <View style={[styles.bas, { paddingBottom: space.lg }]}>
+              <Bouton
+                titre="Ressaisir un code"
+                variante="fantome"
+                icone={<IconPaste size={17} color={colors.ink} />}
+                onPress={() => {
+                  // La feuille s'ouvre tout de suite ; le presse-papiers est lu
+                  // en arrière-plan (la lecture peut traîner ou être refusée
+                  // sur Android 13+/Samsung). La saisie manuelle reste possible
+                  // dans tous les cas.
+                  setColler(true);
+                  void Clipboard.getStringAsync()
+                    .then((contenu) => {
+                      if (contenu.trim()) setSaisie(contenu.trim());
+                    })
+                    .catch(() => {
+                      // Presse-papiers inaccessible : on garde la saisie telle quelle.
+                    });
+                }}
+              />
+            </View>
           </View>
         </View>
-      </View>
+      </SafeAreaView>
 
       <Feuille
         visible={coller}
@@ -199,6 +271,7 @@ export default function Scanner() {
 
 const styles = StyleSheet.create({
   porte: { flex: 1, backgroundColor: colors.canvas },
+  contour: { flex: 1 },
   entete: {
     flexDirection: "row",
     alignItems: "center",

@@ -568,8 +568,28 @@ export class Gestionnaire {
 
   /** Reprend le suivi quand l'application revient au premier plan. */
   demarrerLeSuivi(): () => void {
-    const minuteur = setInterval(() => void this.rafraichir(), 700);
-    return () => clearInterval(minuteur);
+    let actif = true;
+    // Une interrogation lente (DownloadManager sous charge) ne doit jamais
+    // s'empiler : `setInterval` relançait `rafraichir` même quand le tour
+    // précédent n'était pas fini, et chaque appel natif passe par la file
+    // unique d'expo-modules-core — la même que la caméra. Saturée, elle
+    // retardait d'autant la demande de permission. On attend donc la fin du
+    // tour avant d'en programmer le prochain.
+    const boucle = async () => {
+      if (!actif) return;
+      try {
+        await this.rafraichir();
+      } catch {
+        // Une lecture d'état en échec ne tue pas le suivi : le prochain tour
+        // réessaie, comme chaque tick de l'ancien `setInterval` le faisait.
+      }
+      if (actif) minuteur = setTimeout(boucle, 700);
+    };
+    let minuteur = setTimeout(boucle, 700);
+    return () => {
+      actif = false;
+      clearTimeout(minuteur);
+    };
   }
 
   /** Un fichier à demi reçu n'est pas un titre : il ne doit pas occuper la place. */
