@@ -405,6 +405,14 @@ async function pomperPreparation(code: Code, manifeste: Manifeste, nomLot: strin
         piste.etat === "pret" &&
         (enAttente.has(piste.video_id) || echouees.has(piste.video_id)),
     );
+    // Un seul `enFile` pour TOUS les titres arrivés dans ce tour.
+    //
+    // Les passer un par un était le bug de la notification : chaque appel
+    // créait un « nouveau lot » côté module natif, qui ne pouvait donc compter
+    // qu'un titre — la notification annonçait « 1 titre reçu » même quand six
+    // venaient d'arriver. En les regroupant, le compte porte sur le lot réel,
+    // qui est ce que l'utilisateur a lancé d'un geste.
+    const specsLot: Spec[] = [];
     for (const piste of devenusPrets) {
       enAttente.delete(piste.video_id);
       echouees.delete(piste.video_id);
@@ -419,8 +427,9 @@ async function pomperPreparation(code: Code, manifeste: Manifeste, nomLot: strin
         piste.chaine,
         piste.duree,
       );
-      gestionnaire.enFile([specDe(piste, analyse.manifeste)], nomLot);
+      specsLot.push(specDe(piste, analyse.manifeste));
     }
+    if (specsLot.length > 0) gestionnaire.enFile(specsLot, nomLot);
     publierPreparation();
     if (enAttente.size === 0 && echouees.size === 0) {
       arreterPreparation();

@@ -394,6 +394,34 @@ export function basculerBoucle() {
 }
 
 /**
+ * Libère le service de lecture quand il n'a plus rien à faire.
+ *
+ * Android maintient le process vivant tant qu'un service de premier plan de type
+ * `mediaPlayback` est déclaré actif. C'est voulu — c'est ce qui fait tourner la
+ * musique quand on quitte l'app — mais quand AUCUN titre ne joue, ce service ne
+ * sert plus à rien : il garde pourtant le process en mémoire pour rien, et sa
+ * notification fantôme finit par disparaître (bug que le patch `onIsPlayingChanged`
+ * de `scripts/patch-expo-audio.sh` traite).
+ *
+ * On rend donc la session au système dès que l'application passe en arrière-plan
+ * et qu'aucun son ne joue. Le musicien n'y perd rien : sans titre chargé, il n'y
+ * a rien à reprendre ni à contrôler.
+ *
+ * Le téléchargement, lui, a son propre service et n'est pas touché : vider la
+ * file libère la lecture, pas un transfert en cours.
+ */
+export function libererSiInactif(): void {
+  try {
+    if (useLecture.getState().file.length > 0) return;
+    if (!telecommandeActivee) return;
+    lecteur?.setActiveForLockScreen(false);
+    telecommandeActivee = false;
+  } catch {
+    // Un service déjà détaché n'empêche rien : c'est l'état qu'on voulait.
+  }
+}
+
+/**
  * Arrête la lecture et referme le mini-lecteur.
  *
  * C'est le geste du balayage : la carte s'en va, la musique avec elle. On coupe

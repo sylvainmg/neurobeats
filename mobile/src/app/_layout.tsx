@@ -9,10 +9,10 @@ import { Stack } from "expo-router";
 import * as NavigationBar from "expo-navigation-bar";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
-import { StyleSheet } from "react-native";
+import { AppState, StyleSheet } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
-import { preparerLecteur } from "@/playback/lecteur";
+import { libererSiInactif, preparerLecteur } from "@/playback/lecteur";
 import { gestionnaire, useApp } from "@/state/app";
 import { colors } from "@/theme/tokens";
 
@@ -29,6 +29,23 @@ export default function Racine() {
     NavigationBar.setStyle("light");
     return gestionnaire.demarrerLeSuivi();
   }, [initialiser]);
+
+  // Quitter l'application ne doit pas laisser le process Android en vie pour
+  // rien. Le service de lecture est un service de premier plan : il maintient le
+  // process, et c'est voulu quand un titre joue (le son continue hors de
+  // l'app). Quand aucun titre n'est chargé, il ne sert plus à rien — on le rend
+  // au système, qui libère alors la mémoire.
+  //
+  // Le déclencheur est `background` et non `inactive` : `inactive` survient
+  // aussi quand une feuille système (volet de notifications, boîte de dialogue)
+  // recouvre l'app, et libérer sur ce simple mouvement ferait disparaître la
+  // notification de lecture au moindre glissement du volet.
+  useEffect(() => {
+    const abonnement = AppState.addEventListener("change", (etatSuivant) => {
+      if (etatSuivant === "background") libererSiInactif();
+    });
+    return () => abonnement.remove();
+  }, []);
 
   return (
     <SafeAreaProvider>

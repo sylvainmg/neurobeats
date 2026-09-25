@@ -101,6 +101,13 @@ export function FeuilleParoles({ visible, onFermer }: { visible: boolean; onFerm
           piste?.duree ?? 0,
         );
         setParoles(resultat);
+        // Trace de rendu : distingue « rien trouvé » d'une réponse arrivée mais
+        // non affichée (titres qui diffèrent, lignes vides après répartition).
+        console.log(
+          `[paroles-ui] ${videoId} trouve=${resultat.found} ` +
+            `lignes=${resultat.lines.length} videoIdRecu=${resultat.videoId} ` +
+            `base=${base ?? "nulle"}`,
+        );
         // Une panne réseau n'est pas un « pas de paroles » : on distingue les
         // deux pour ne pas afficher « aucune parole trouvée » à tort.
         if (resultat.retryable) {

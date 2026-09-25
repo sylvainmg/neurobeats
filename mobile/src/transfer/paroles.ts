@@ -53,11 +53,19 @@ function fichierDe(videoId: string): File {
  */
 const DELAI_SECONDES = 15;
 
-/** L'enveloppe `{status, data}` du backend, reduced à son `data`. */
-function lire(reponse: Response): Paroles | null {
+/**
+ * L'enveloppe `{status, data}` du backend, réduite à son `data`.
+ *
+ * `await` INDISPENSABLE : `Response.json()` renvoie une promesse, pas l'objet.
+ * Lire `corps.data` sans l'attendre donnait `undefined` en silence — d'où un
+ * « Paroles indisponibles » alors que le serveur répondait parfaitement. Le
+ * `as` sur la promesse aurait masqué l'erreur au typage ; on attend, et on
+ * note le type de ce qu'on reçoit plutôt que de le supposer.
+ */
+async function lire(reponse: Response): Promise<Paroles | null> {
   if (!reponse.ok) return null;
   try {
-    const corps = reponse.json() as { data?: Paroles };
+    const corps = (await reponse.json()) as { data?: Paroles } | null;
     return corps?.data ?? null;
   } catch {
     return null;
@@ -123,7 +131,16 @@ export async function chargerParoles(
   const delai = setTimeout(() => controleur.abort(), DELAI_SECONDES * 1000);
   try {
     const reponse = await fetch(url, { signal: controleur.signal });
-    const paroles = lire(reponse);
+    const paroles = await lire(reponse);
+    // Trace courte : elle dit ce que le serveur a vraiment répondu, sans le
+    // contenu (les paroles sont longues). C'est la seule trace qui permet de
+    // distinguer « le réseau a échoué » de « le serveur n'a rien trouvé » de
+    // « la réponse est arrivée mais n'a pas été rendue ».
+    console.log(
+      `[paroles] ${videoId} http=${reponse.status} ` +
+        `trouve=${paroles?.found ?? "n/a"} lignes=${paroles?.lines?.length ?? 0} ` +
+        `source=${paroles?.source ?? "-"}`,
+    );
     if (!paroles) return normaliser(null, videoId);
     // On ne garde que ce qui se voit : un « pas de paroles » pour ce titre ne
     // mérite pas de fichier, et le backend répondra de la même façon.

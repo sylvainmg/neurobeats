@@ -57,6 +57,7 @@
     "typescript": "~6.0.3"
   },
   "scripts": {
+    "postinstall": "bash scripts/patch-expo-audio.sh",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
