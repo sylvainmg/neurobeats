@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 import { ProfileView } from "@/components/profile/profile-view";
 import { PlayerProvider } from "@/components/player/player-context";
@@ -11,11 +12,16 @@ export const metadata: Metadata = { title: "Profil — NeuroBeats" };
  * `PlayerProvider` est monté ici (la page est hors `AppShell`) pour que le
  * lancement d'un titre depuis l'historique joue le même chemin que la
  * recherche : `play(videoId)` → POST /api/play sur le daemon de lecture.
+ *
+ * `Suspense` est requis : le composant lit la query (`?tab=ia`) pour que le
+ * bandeau « Configurer » ouvre bien l'onglet IA depuis la page elle-même.
  */
 export default function ProfilePage() {
   return (
     <PlayerProvider>
-      <ProfileView />
+      <Suspense fallback={null}>
+        <ProfileView />
+      </Suspense>
     </PlayerProvider>
   );
 }

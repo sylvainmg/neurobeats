@@ -24,6 +24,10 @@ GENERIC_CHANNELS = {
 }
 
 GENRE_LABELS = ["rap fr", "pop us", "rap us", "dance", "lofi", "autre"]
+# Genres d'amorce au premier lancement (ni historique ni note) : l'accueil et
+# Decouvrir ont besoin d'un contexte explicite pour semer une selection. Ordre =
+# priorite d'essai ; on garde le premier genre qui rend des titres.
+COLD_START_GENRES = ("pop us", "rap fr", "dance", "lofi")
 # Requetes YouTube pertinentes par genre (le label brut est ambigu : 'pop us' matche des jeux)
 GENRE_SEARCH_TERMS = {
     "rap fr": ["rap français", "rap fr 2024", "nouveauté rap français"],

@@ -10,3 +10,9 @@ backend/covers/
 backend/prepared/
 /adb
 landing/
+
+# Artefacts de test Playwright (snapshots/screenshots)
+.playwright-mcp/
+
+# Journaux de serveur locaux (backend lance a la main ou via dev.sh)
+backend/*.log

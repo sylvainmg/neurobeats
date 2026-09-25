@@ -212,7 +212,7 @@ export function NowPlaying() {
   }, [awaitTarget]);
 
   return (
-    <footer className="border-border bg-surface relative flex h-20 shrink-0 items-center gap-4 border-t px-4">
+    <footer className="border-border bg-surface relative grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-t px-4 py-2 md:h-20 md:grid-cols-[14rem_minmax(0,1fr)_auto] md:gap-4 md:py-0">
       {/* Retour d'action : un « Suivant » qui echoue ne doit plus etre muet.
           Detache du flux du bas (position absolue) : aucun decalage de mise en page. */}
       {playerError && (
@@ -224,28 +224,29 @@ export function NowPlaying() {
           {playerError}
         </p>
       )}
-      {/* Titre en cours */}
-      <div className="flex w-56 min-w-0 items-center gap-3">
+      {/* Titre en cours — rangée 1 sur mobile, colonne gauche sur desktop. */}
+      <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-3">
         {/* Vignette du titre en cours, comme dans les résultats de recherche. */}
         {state?.video_id ? (
           <TrackCover
             videoId={state.video_id}
             title={title}
-            sizes={coverSizes(48)}
-            className="size-12"
+            sizes={coverSizes(40)}
+            className="size-10 shrink-0 md:size-12"
           />
         ) : (
-          <span className="bg-surface-hover size-12 shrink-0 rounded-md" />
+          <span className="bg-surface-hover size-10 shrink-0 rounded-md md:size-12" />
         )}
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{title}</p>
           <p className="text-muted-foreground truncate text-xs">{subtitle}</p>
         </div>
       </div>
 
-      {/* Contrôles + progression */}
-      <div className="flex flex-1 flex-col items-center gap-1">
-        <div className="flex items-center gap-4">
+      {/* Contrôles + progression — rangée 2 pleine largeur sur mobile,
+          colonne centrale sur desktop. */}
+      <div className="col-span-2 row-start-2 flex flex-col items-center gap-1 md:col-span-1 md:col-start-2 md:row-start-1">
+        <div className="flex items-center gap-2 sm:gap-4">
           <Button
             variant="ghost"
             size="icon-sm"
@@ -289,15 +290,23 @@ export function NowPlaying() {
           </Button>
           {/* Reste cliquable pendant la preparation : le serveur repond « file en
               preparation » et le clic est honore des qu'un titre arrive, au lieu
-              d'etre bloque par une file encore vide. */}
+              d'etre bloque par une file encore vide.
+              Garde-fou supplementaire : si `remaining` est 0 mais qu'il y a encore
+              des titres dans la timeline (race condition WebSocket), on garde le
+              bouton actif pour ne pas bloquer l'utilisateur. */}
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label={queueFilling ? "Suivant (file en préparation)" : "Suivant"}
+            aria-label={queueFilling ? "Suivant (file en preparation)" : "Suivant"}
             aria-busy={queueFilling}
-            title={queueFilling ? "File en préparation…" : "Suivant"}
+            title={queueFilling ? "File en preparation…" : "Suivant"}
             disabled={
-              !playing || ((displayQueue?.remaining ?? 0) === 0 && !queueFilling)
+              !playing ||
+              ((displayQueue?.remaining ?? 0) === 0 &&
+                !queueFilling &&
+                (!displayQueue?.tracks ||
+                  displayQueue.tracks.length <=
+                    (displayQueue?.current_index ?? -1) + 1))
             }
             onClick={() => void skip()}
             className="text-muted-foreground hover:text-foreground disabled:opacity-40"
@@ -361,8 +370,11 @@ export function NowPlaying() {
         </div>
       </div>
 
-      {/* Volume + file de lecture + paroles */}
-      <div className="flex w-64 items-center justify-end gap-3">
+      {/* Actions — rangée 1 sur mobile (colonne 2), colonne droite sur desktop.
+          Le volume n'apparaît qu'à partir de lg ; l'ajout playlist est masqué
+          sous sm. La note est compacte (< md, bouton → modale) ou en rangée
+          d'étoiles (md+). */}
+      <div className="col-start-2 row-start-1 flex items-center justify-end gap-1 md:col-start-3 md:gap-3">
         <div className="hidden items-center gap-2 lg:flex">
           <Volume2 className="text-muted-foreground size-4" />
           <Slider
@@ -388,7 +400,7 @@ export function NowPlaying() {
           aria-label="Ajouter à une playlist"
           disabled={!state?.video_id}
           onClick={() => setAddOpen(true)}
-          className="text-muted-foreground hover:text-foreground rounded-full disabled:opacity-40"
+          className="text-muted-foreground hover:text-foreground rounded-full disabled:opacity-40 hidden sm:inline-flex"
         >
           <ListPlus />
         </Button>

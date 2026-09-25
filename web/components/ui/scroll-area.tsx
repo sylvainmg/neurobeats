@@ -7,6 +7,7 @@ import { ScrollArea as ScrollAreaPrimitive } from "radix-ui";
 function ScrollArea({
   className,
   children,
+  onScroll,
   ...props
 }: React.ComponentProps<typeof ScrollAreaPrimitive.Root>) {
   return (
@@ -17,11 +18,15 @@ function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
+        // Le Root ne scrolle jamais : c'est le Viewport qui porte le défilement.
+        // Or `scroll` ne bubble pas en DOM — un `onScroll` posé sur le Root ne
+        // se déclencherait donc jamais. On le transmet ici, à la cible réelle.
+        onScroll={onScroll}
         // Radix enveloppe le contenu dans un div en `display: table; min-width:
         // 100%` (largeur dictée par le contenu). Sans cette surcharge, `truncate`
         // et `w-full` ne peuvent pas contraindre la largeur : le texte déborde
         // et se fait couper net au lieu d'être ellipsé.
-        className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1 [&>div]:block!"
+        className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none overscroll-contain focus-visible:ring-[3px] focus-visible:outline-1 [&>div]:block!"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>

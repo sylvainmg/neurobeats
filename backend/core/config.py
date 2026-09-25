@@ -2,8 +2,30 @@
 import os
 import shutil
 
-# Dossier backend/ (code + donnees partagees avec l'API)
-BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Racine du code livree dans le bundle et racine des donnees ecritures.
+# Les donnees ne doivent jamais retomber dans le code en production : un
+# un backend web et une AppImage lances sur la même machine partageaient alors
+# leur historique, leurs caches et leurs reglages. Le desktop fournit toujours
+# NEUROBEATS_DATA_DIR ; ce default sert aux lancements CLI/web directs.
+CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _default_data_root() -> str:
+    profile = (os.environ.get("NEUROBEATS_PROFILE") or "web").strip() or "web"
+    profile = "".join(char for char in profile if char.isalnum() or char in "-_")[:32] or "web"
+    system = os.name
+    if system == "nt":
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    elif system == "posix" and os.uname().sysname == "Darwin":
+        base = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    return os.path.abspath(os.path.join(base, "neurobeats", profile))
+
+
+DATA_ROOT = os.path.abspath(os.path.expanduser(os.environ.get("NEUROBEATS_DATA_DIR") or _default_data_root()))
+BASE = DATA_ROOT
+os.makedirs(DATA_ROOT, exist_ok=True)
 
 MODEL = "qwen2.5:7b"
 TIMING = os.environ.get("NEUROBEATS_TIMING") == "1"  # affiche les temps par etape

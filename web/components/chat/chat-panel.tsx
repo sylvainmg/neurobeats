@@ -9,6 +9,7 @@ import { ChatComposer, ChatMessages } from "@/components/chat/chat-messages";
 import { ChatHistory } from "@/components/chat/chat-history";
 import { useChatConversation } from "@/components/chat/use-chat";
 import { globalChatStore } from "@/lib/chat";
+import { useAiStatus } from "@/components/profile/ai-settings";
 import { cn } from "cn";
 
 const COMPOSER_ID = "chat-composer";
@@ -17,6 +18,9 @@ const COMPOSER_ID = "chat-composer";
 export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const chat = useChatConversation(globalChatStore, "global");
   const [showHistory, setShowHistory] = useState(false);
+  const aiStatus = useAiStatus();
+  // Désactive l'input et le bouton envoyer si modèle non configuré ou en chargement.
+  const composerDisabled = !aiStatus?.configured || aiStatus.engine.state === "loading";
 
   // Focus du composer à l'ouverture (uniquement sur le fil, pas l'historique).
   useEffect(() => {
@@ -49,7 +53,7 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
       <aside
         aria-label="Assistant IA"
         className={cn(
-          "bg-surface border-border fixed top-2 right-2 bottom-24 z-50 flex w-[22rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-transform duration-300",
+          "bg-surface border-border fixed top-2 right-2 bottom-32 z-50 flex w-[22rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-transform duration-300 md:bottom-24",
           open ? "translate-x-0" : "translate-x-[calc(100%+0.5rem)]",
         )}
       >
@@ -140,6 +144,7 @@ export function ChatPanel({ open, onClose }: { open: boolean; onClose: () => voi
               onSubmit={() => void chat.send()}
               onStop={chat.stop}
               running={chat.running}
+              disabled={composerDisabled}
               inputId={COMPOSER_ID}
             />
           </>

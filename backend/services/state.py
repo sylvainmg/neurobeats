@@ -4,9 +4,11 @@ Regroupe les caches/verrous globaux et les petites fonctions utilitaires
 utilisees par plusieurs services (audio, streaming, recommendation...).
 """
 import json
+import os
 import queue
 import re
 import subprocess
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -24,7 +26,16 @@ STREAM_CACHE: dict = {}   # video_id -> stream_url
 LAST_SEARCH: dict = {}    # derniere recherche (video_id -> meta)
 
 # --- mpv daemon : UN SEUL mpv, persistant (lecteur singleton) ---
-_MPV_SOCK = "/tmp/neurobeats-mpv.sock"
+# Socket dans le temp dir de la plateforme (Windows vit sans /tmp). Le nom
+# reste stable par utilisateur/machine : c'est "notre" socket, et le reaping
+# des orphelins s'appuie dessus (`--input-ipc-server=...` en marqueur).
+# Socket IPC du daemon mpv, SCOPÉ PAR PORT : chaque backend (dev 8040, app 8041,
+# autre instance NEUROBEATS_PORT=...) a son propre daemon mpv — deux backends
+# peuvent tourner côte à côte sans se voler le socket, et le reaping d'orphelins
+# (audio._reap_orphan_mpv) ne touche que les mpv liés à NOTRE socket.
+_MPV_SOCK = os.path.join(
+    tempfile.gettempdir(), f"neurobeats-mpv-{os.environ.get('NEUROBEATS_PORT', '8000')}.sock"
+)
 _mpv_daemon: subprocess.Popen | None = None
 _mpv_ipc_lock = threading.Lock()
 _mpv_ipc_seq = 1

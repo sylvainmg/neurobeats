@@ -13,7 +13,7 @@ Ollama local par defaut, OU LM Studio / OpenAI-compatible / Anthropic.
 import json
 import re
 
-from core.config import BASE
+from core.config import CODE_ROOT
 from core.history import MAX_MESSAGES_DEFAULT, truncate_messages
 from services import llm
 from services.state import _tprint
@@ -35,7 +35,11 @@ DEFAULT_SYSTEM = (
     "Reponds en phrases courtes et claires. N'invente jamais de titre ni de "
     "video_id. N'affirme une action comme faite QUE si tu as reellement appele "
     "l'outil correspondant dans ce tour : sinon dis clairement que tu ne l'as "
-    "pas fait."
+    "pas fait. "
+    "Quand l'utilisateur demande de lire/jouer un titre (lance, joue, mets, ecoute, play...), "
+    "utilise play_now(query) directement : il cherche ET joue le top resultat en un seul appel. "
+    "Ne demande JAMAIS de confirmation sur quel titre prendre : prends le meilleur (souvent le premier). "
+    "N'utilise pas search_music + play_choice ensemble pour lire : utilise play_now."
 )
 
 # Assistant dedie a la page Profil : il gere les GOUTS, il ne lance pas de musique.
@@ -113,7 +117,7 @@ _TOOL_LABELS = {
 def _load_tools(scope: str = "global"):
     """Jeu d'outils de la portee demandee (`tools.json` ou `tools_profile.json`)."""
     name = _TOOL_FILES.get(scope, "tools.json")
-    with open(f"{BASE}/{name}", encoding="utf-8") as f:
+    with open(f"{CODE_ROOT}/{name}", encoding="utf-8") as f:
         return json.load(f)
 
 

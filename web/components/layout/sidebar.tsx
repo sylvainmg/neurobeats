@@ -5,12 +5,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Check,
-  Compass,
-  Home,
   Library,
   ListMusic,
   Plus,
-  Search,
   Sparkles,
   TrendingUp,
   X,
@@ -19,16 +16,10 @@ import {
 import { cn } from "cn";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Logo } from "@/components/layout/logo";
+import { NAV } from "@/components/layout/nav-items";
 import { TrackCover } from "@/components/track-cover";
 import { usePlaylists } from "@/lib/playlists";
 import { coverSizes } from "@/lib/track";
-
-const NAV = [
-  { href: "/", label: "Accueil", icon: Home },
-  { href: "/search", label: "Recherche", icon: Search },
-  { href: "/discover", label: "Découvrir", icon: Compass },
-  { href: "/library", label: "Bibliothèque", icon: Library },
-];
 
 /** Barre latérale fixe (marque + navigation + bibliothèque), style Spotify. */
 export function Sidebar() {

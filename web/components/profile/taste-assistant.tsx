@@ -9,6 +9,7 @@ import { ChatComposer, ChatMessages } from "@/components/chat/chat-messages";
 import { ChatHistory } from "@/components/chat/chat-history";
 import { useChatConversation } from "@/components/chat/use-chat";
 import { profileChatStore } from "@/lib/chat";
+import { useAiStatus } from "@/components/profile/ai-settings";
 import { cn } from "cn";
 
 const COMPOSER_ID = "profile-chat-composer";
@@ -37,6 +38,9 @@ export function TasteAssistant({ active }: { active: boolean }) {
   const chat = useChatConversation(profileChatStore, "profile");
   const [showHistory, setShowHistory] = useState(false);
   const { newConversation } = chat;
+  const aiStatus = useAiStatus();
+  // Désactive l'input et le bouton envoyer si modèle non configuré ou en chargement.
+  const composerDisabled = !aiStatus?.configured || aiStatus.engine.state === "loading";
 
   // Fil neuf à chaque ouverture du Profil. `newConversation` est stable (mémoïsé
   // par le hook) : l'effet ne s'exécute donc qu'une fois, au montage.
@@ -81,7 +85,7 @@ export function TasteAssistant({ active }: { active: boolean }) {
   return (
     <section
       aria-labelledby="taste-title"
-      className="bg-surface border-border flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border"
+      className="bg-surface border-border my-auto flex h-[min(62dvh,600px)] min-h-0 flex-col overflow-hidden rounded-xl border"
     >
       <header className="border-border flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
@@ -150,7 +154,7 @@ export function TasteAssistant({ active }: { active: boolean }) {
           {/* Bandeau discret si aucun modèle IA n'est réglé (le reste fonctionne). */}
           <AiSetupBanner />
           {empty ? (
-            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5 overflow-y-auto p-6 text-center">
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5 overflow-y-auto overscroll-contain p-6 text-center">
               <span className="bg-primary/15 text-primary grid size-14 place-items-center rounded-full">
                 <Sparkles className="size-6" />
               </span>
@@ -209,6 +213,7 @@ export function TasteAssistant({ active }: { active: boolean }) {
             onSubmit={() => void chat.send()}
             onStop={chat.stop}
             running={chat.running}
+            disabled={composerDisabled}
             inputId={COMPOSER_ID}
           />
         </>

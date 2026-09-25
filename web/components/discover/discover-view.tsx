@@ -239,8 +239,9 @@ export function DiscoverView() {
         </div>
       )}
 
-      {/* 1. Mix personnel */}
-      {mix && (mix.tracks.length > 0 || !mix.ready) && (
+      {/* 1. Mix personnel — affiché seulement s'il a du contenu, ou pendant sa
+          construction : un mix vide et définitif ne laisse pas de squelette. */}
+      {mix && (mix.tracks.length > 0 || Boolean(data?.building)) && (
         <section aria-labelledby="mix-title" aria-busy={!mix.ready}>
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <h2 id="mix-title" className="text-xl font-semibold">

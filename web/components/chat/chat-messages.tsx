@@ -207,6 +207,7 @@ export function ChatComposer({
   onSubmit,
   onStop,
   running = false,
+  disabled = false,
   inputId,
 }: {
   value: string;
@@ -214,9 +215,11 @@ export function ChatComposer({
   onSubmit: () => void;
   onStop: () => void;
   running?: boolean;
+  /** Désactivé si modèle IA non configuré ou en chargement : input + bouton envoyable. */
+  disabled?: boolean;
   inputId?: string;
 }) {
-  const canSend = value.trim().length > 0;
+  const canSend = value.trim().length > 0 && !disabled;
   const remaining = MAX_MESSAGE_CHARS - value.length;
   const atLimit = remaining <= 0;
   // Le compteur n'apparaît qu'à l'approche de la limite (pas de bruit en permanence).
@@ -227,9 +230,9 @@ export function ChatComposer({
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        if (!running) onSubmit();
+        if (!running && canSend) onSubmit();
       }}
-      className="nb-selectable border-border border-t p-3"
+      className={cn("nb-selectable border-border border-t p-3", disabled && "opacity-50 pointer-events-none")}
     >
       <div className="flex items-end gap-2">
         <div
@@ -251,6 +254,7 @@ export function ChatComposer({
             aria-describedby={helperId}
             autoComplete="off"
             maxLength={MAX_MESSAGE_CHARS}
+            disabled={disabled}
             className={cn(
               "text-foreground max-h-40 min-h-10 rounded-3xl",
               atLimit && "focus-visible:ring-destructive",

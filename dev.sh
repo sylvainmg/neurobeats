@@ -37,6 +37,12 @@ _default_backend_port() {
 }
 BACKEND_PORT="$(_default_backend_port)"
 
+# Le workflow web possède son propre volume de données. Il ne doit jamais
+# écrire dans backend/ (code) ni dans le userData de l'AppImage desktop.
+WEB_DATA_ROOT="${NEUROBEATS_DATA_DIR:-${XDG_DATA_HOME:-${HOME:-/tmp}/.local/share}/neurobeats/web}"
+WEB_MODELS_DIR="${NEUROBEATS_MODELS_DIR:-$WEB_DATA_ROOT/models}"
+mkdir -p "$WEB_DATA_ROOT" "$WEB_MODELS_DIR"
+
 if [ -t 1 ]; then
   C_OK=$'\033[32m'; C_WARN=$'\033[33m'; C_ERR=$'\033[31m'; C_OFF=$'\033[0m'
 else
@@ -137,7 +143,9 @@ start_all() {
   say ""
   say "Demarrage des serveurs"
   ( cd "$ROOT" && launch "$BACKEND_LOG" env NEUROBEATS_PORT="$BACKEND_PORT" \
-      NEUROBEATS_TIMING=1 backend/.venv/bin/python backend/main.py )
+      NEUROBEATS_TIMING=1 NEUROBEATS_PROFILE=web \
+      NEUROBEATS_DATA_DIR="$WEB_DATA_ROOT" NEUROBEATS_MODELS_DIR="$WEB_MODELS_DIR" \
+      backend/.venv/bin/python backend/main.py )
   ok "backend lance  -> $BACKEND_LOG"
   ( cd "$ROOT/web" && launch "$FRONTEND_LOG" npm run dev -- -p "$FRONTEND_PORT" )
   ok "frontend lance -> $FRONTEND_LOG (port :$FRONTEND_PORT)"

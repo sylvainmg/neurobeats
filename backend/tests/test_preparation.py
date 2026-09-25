@@ -243,6 +243,59 @@ def cas_echecs_plafonnes():
           len(submis) == 1 and submis[0][2] == prep.ECHECS_MAX - 1, str(submis))
 
 
+def cas_relance_forcee():
+    """« Réessayer » (forcer=True) passe outre ECHECS_MAX et repart a zero."""
+    video = "TestRelanceF"
+    with prep._lock:
+        prep._echecs[video] = (time.time() - 1, "source morte", prep.ECHECS_MAX)
+    submis = []
+
+    class FauxPool:
+        def submit(self, fonction, *args, **kwargs):
+            submis.append(args)
+            return None
+
+    ancien_executeur, prep._executeur = prep._executeur, lambda: FauxPool()
+    try:
+        res = prep.demander(video, forcer=True)
+    finally:
+        prep._executeur = ancien_executeur
+        with prep._lock:
+            prep._en_cours.pop(video, None)
+            prep._echecs.pop(video, None)
+    check("relance forcee malgre le cap", res == "preparation", res)
+    check("compteur remis a zero pour la relance",
+          len(submis) == 1 and submis[0][2] == 0, str(submis))
+
+
+def cas_backoff():
+    """Cap atteint mais ECHEC_RETENTATIVE ecoulee : la source re-tente."""
+    video = "TestBackoff"
+    for delai, attendu in ((1, "erreur"), (prep.ECHEC_RETENTATIVE + 1, "preparation")):
+        with prep._lock:
+            prep._echecs[video] = (time.time() - delai, "source morte", prep.ECHECS_MAX)
+        submis = []
+
+        class FauxPool:
+            def submit(self, fonction, *args, **kwargs):
+                submis.append(args)
+                return None
+
+        ancien_executeur, prep._executeur = prep._executeur, lambda: FauxPool()
+        try:
+            res = prep.demander(video)
+            if attendu == "preparation":
+                essai = submis[0][2] if submis else None
+        finally:
+            prep._executeur = ancien_executeur
+            with prep._lock:
+                prep._en_cours.pop(video, None)
+                prep._echecs.pop(video, None)
+        check(f"backoff {delai}s -> {attendu}", res == attendu, res)
+        if attendu == "preparation":
+            check("compteur remis a zero apres backoff", essai == 0, essai)
+
+
 def main() -> int:
     print("Preparation des titres pour le transfert")
     if not FFMPEG:
@@ -261,6 +314,8 @@ def main() -> int:
     cas_etats()
     cas_duree()
     cas_echecs_plafonnes()
+    cas_relance_forcee()
+    cas_backoff()
 
     total = len(CHECKS)
     reussis = sum(CHECKS)

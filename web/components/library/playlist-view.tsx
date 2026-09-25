@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   Check,
   ListMusic,
+  Loader2,
   Pencil,
   Play,
   Plus,
@@ -56,6 +57,8 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
   const [results, setResults] = useState<Track[]>([]);
   const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Index du titre dont le son se charge (le backend ne répond qu'au démarrage).
+  const [pendingIndex, setPendingIndex] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const transfer = useTransferTicket(playlistId);
@@ -124,10 +127,16 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
 
   async function play(start = 0) {
     if (!playlist) return;
+    // Le backend ne répond qu'une fois le son réellement démarré (résolution
+    // yt-dlp + lecture) : on l'annonce au lieu de laisser l'écran muet.
+    setPendingIndex(start);
+    setError(null);
     try {
       await api.playPlaylist(playlist.id, start);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lecture impossible.");
+    } finally {
+      setPendingIndex(null);
     }
   }
 
@@ -219,11 +228,15 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
             <Button
               className="rounded-full"
               size="lg"
-              disabled={songs.length === 0}
+              disabled={songs.length === 0 || pendingIndex !== null}
               onClick={() => void play(0)}
             >
-              <Play className="fill-current" />
-              Lecture
+              {pendingIndex !== null ? (
+                <Loader2 className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Play className="fill-current" />
+              )}
+              {pendingIndex !== null ? "Chargement…" : "Lecture"}
             </Button>
             <Button
               variant="ghost"
@@ -343,6 +356,13 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
         </section>
       )}
 
+      {pendingIndex !== null && (
+        <p role="status" className="text-muted-foreground flex items-center gap-2 text-xs">
+          <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
+          Chargement du titre… le son démarre dès qu’il est prêt.
+        </p>
+      )}
+
       {songs.length === 0 ? (
         <div className="text-muted-foreground bg-surface rounded-lg p-8 text-center text-sm">
           Cette playlist est vide. Ajoute des titres depuis la recherche.
@@ -357,18 +377,33 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
               <button
                 type="button"
                 onClick={() => void play(index)}
-                aria-label={`Lire ${song.title}`}
-                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                disabled={pendingIndex !== null}
+                aria-busy={pendingIndex === index}
+                aria-label={
+                  pendingIndex === index
+                    ? `Chargement de ${song.title}`
+                    : `Lire ${song.title}`
+                }
+                className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:cursor-wait"
               >
                 <span className="text-muted-foreground w-5 shrink-0 text-right text-xs tabular-nums">
                   {index + 1}
                 </span>
-                <TrackCover
-                  videoId={song.video_id}
-                  title={song.title}
-                  sizes={coverSizes(40)}
-                  className="size-10 shrink-0"
-                />
+                <span className="relative size-10 shrink-0">
+                  <TrackCover
+                    videoId={song.video_id}
+                    title={song.title}
+                    sizes={coverSizes(40)}
+                    className="size-10"
+                  />
+                  {/* Le titre demandé porte le seul indicateur animé : on sait
+                      lequel charge, même dans une longue playlist. */}
+                  {pendingIndex === index && (
+                    <span className="bg-background/60 absolute inset-0 grid place-items-center rounded-lg">
+                      <Loader2 className="text-primary size-4 animate-spin" aria-hidden="true" />
+                    </span>
+                  )}
+                </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">{song.title}</span>
                   <span className="text-muted-foreground block truncate text-xs">
@@ -381,7 +416,7 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
                 aria-label={`Retirer ${song.title} de la playlist`}
                 disabled={busy}
                 onClick={() => void remove(song.video_id)}
-                className="text-muted-foreground hover:text-destructive shrink-0 rounded-full p-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-40"
+                className="text-muted-foreground hover:text-destructive shrink-0 rounded-full p-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-40 max-md:opacity-100 pointer-coarse:opacity-100"
               >
                 <X className="size-4" />
               </button>

@@ -127,7 +127,7 @@ function ResultRow({
         </span>
 
         {duration && (
-          <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+          <span className="text-muted-foreground max-sm:hidden shrink-0 text-xs tabular-nums">
             {duration}
           </span>
         )}
@@ -136,11 +136,13 @@ function ResultRow({
       {/* Note ★ et menu d'options : posés À CÔTÉ de la ligne (jamais imbriqués
           dans son bouton), affichés au survol/focus pour ne pas charger la
           lecture. Le menu étant portalé, il reste ouvert même quand la ligne
-          n'est plus survolée. */}
+          n'est plus survolée. Sur mobile et tactile, le voile est permanent :
+          les étoiles et le menu doivent rester accessibles sans survol. */}
       <div
         className={cn(
-          "pointer-events-none absolute inset-y-0 right-2 flex items-center gap-0.5 bg-gradient-to-l from-[var(--card)] via-[var(--card)] to-transparent pl-6 opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100",
-          menuOpen && "opacity-100",
+          "pointer-events-none absolute inset-y-0 right-2 flex items-center gap-0.5 bg-[var(--card)] bg-gradient-to-l from-[var(--card)] via-[var(--card)] to-transparent pl-6",
+          "opacity-100 md:opacity-0 md:transition-opacity md:group-hover/row:opacity-100 md:focus-within:opacity-100 md:pointer-coarse:opacity-100",
+          menuOpen && "opacity-100 md:opacity-100",
         )}
       >
         <Rating

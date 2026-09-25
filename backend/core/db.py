@@ -17,7 +17,9 @@ import sqlite3
 import threading
 from datetime import datetime
 
-BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # dossier backend/
+from core.config import DATA_ROOT
+
+BASE = DATA_ROOT  # donnees ecritures, separees du code en mode packagé
 DB_PATH = os.path.join(BASE, "neurobeats.db")
 
 SCHEMA = """

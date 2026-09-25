@@ -225,7 +225,7 @@ export function HistoryDialog({
             </p>
           ) : (
             <ScrollArea
-              className="h-[50vh]"
+              className="h-[50dvh]"
               onScroll={(event) => {
                 const viewport = event.currentTarget;
                 const nearBottom =
@@ -306,7 +306,7 @@ export function HistoryDialog({
                           setItems((prev) => prev.filter((e) => e.id !== entry.id));
                           void onRemove(entry.id);
                         }}
-                        className="text-muted-foreground hover:bg-surface-hover hover:text-destructive absolute top-1/2 right-2 -translate-y-1/2 rounded-full p-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                        className="text-muted-foreground hover:bg-surface-hover hover:text-destructive absolute top-1/2 right-2 -translate-y-1/2 rounded-full p-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 max-md:opacity-100 pointer-coarse:opacity-100"
                       >
                         <X className="size-4" aria-hidden="true" />
                       </button>

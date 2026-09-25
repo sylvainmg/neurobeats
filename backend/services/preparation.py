@@ -50,6 +50,11 @@ _pool_lock = threading.Lock()
 _en_cours: dict = {}          # video_id -> horodatage de debut
 _echecs: dict = {}            # video_id -> (horodatage, raison, essence echecs)
 ECHEC_TTL = 24 * 3600
+# Apres ECHECS_MAX echecs rapproches, on espace les re-tentatives : une source
+# morte ne monopolise pas le worker, mais une source provisoirement injoignable
+# (cas SWISH) garde une chance de revenir sans action de l'utilisateur. Court
+# devant la vie d'une session (20 min) pour qu'une garde mobile la rattrape.
+ECHEC_RETENTATIVE = 5 * 60
 
 
 def _log(message: str):
@@ -140,13 +145,22 @@ def raison_echec(video_id: str) -> str:
     return echec[1] if echec else ""
 
 
-def demander(video_id: str, meta: dict | None = None) -> str:
+def demander(video_id: str, meta: dict | None = None, forcer: bool = False) -> str:
     """Demande la preparation d'un titre (idempotent, non bloquant).
 
     Re-lance automatiquement apres un echec, mais plafonne a ECHECS_MAX echecs
-    consecutifs : une source morte ne doit pas monopoliser un worker en boucle
-    (le telephone voit alors « erreur » et arrete de poller). Le compteur se
-    remet a zero sur succes ou quand ECHEC_TTL expire.
+    rapproches : une source morte ne doit pas monopoliser un worker en boucle
+    (le telephone voit alors « erreur » et arrete de poller). Une fois le cap
+    atteint, les re-tentatives s'espa cent a ECHEC_RETENTATIVE : une source
+    provisoirement injoignable revient d'elle-meme, sans attendre ECHEC_TTL.
+
+    Args:
+        video_id: Identifiant du titre a preparer.
+        meta: Metadonnees (titre, chaine, album) pour l'etiquetage.
+        forcer: Si True (relance explicite « Réessayer »), passe outre le
+            plafond ECHECS_MAX sans attendre ECHEC_RETENTATIVE et remet le
+            compteur a zero : un echec transitoire ne doit pas priver
+            l'utilisateur de relancer le titre.
 
     Returns:
         Etat courant : « pret », « preparation », « erreur » ou « absent »
@@ -162,12 +176,18 @@ def demander(video_id: str, meta: dict | None = None) -> str:
             return "preparation"
         echec = _echecs.get(video_id) or ()
         if echec and time.time() - echec[0] >= ECHEC_TTL:
-            echec = ()  # fenetre expirée : on re-authorise une tentative
+            echec = ()  # fenetre expiree : on re-authorise une tentative
         compte = echec[2] if len(echec) > 2 else 0
-        if echec and compte >= ECHECS_MAX:
+        cap_atteint = echec and compte >= ECHECS_MAX
+        if cap_atteint and not forcer and time.time() - echec[0] < ECHEC_RETENTATIVE:
             return "erreur"
+        # Cap atteint et delai respecte, ou relance explicite : on repart de
+        # zero, sinon le compte porterait la tentative suivante au cap d'emblee.
+        if cap_atteint or forcer:
+            echec = (time.time(), "", 0)
+            compte = 0
         _en_cours[video_id] = time.time()
-        # Le compte survit a la re-tentative : c'est lui qui borne la boucle.
+        # Le compte survit a la re-tentative : il borne les echecs rapproches.
         _echecs[video_id] = (echec[0] if echec else time.time(),
                              echec[1] if echec else "", compte)
     _executeur().submit(_preparer, video_id, dict(meta or {}), compte)

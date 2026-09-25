@@ -428,7 +428,7 @@ export function LyricsOverlay({
       aria-modal="true"
       aria-label="Paroles du titre en cours"
       className={cn(
-        "border-border bg-card fixed inset-x-2 top-2 bottom-24 z-40 overflow-hidden rounded-2xl border shadow-[0_20px_60px_rgba(0,0,0,0.55)]",
+        "border-border bg-card fixed inset-x-2 top-2 bottom-32 z-40 overflow-hidden rounded-2xl border shadow-[0_20px_60px_rgba(0,0,0,0.55)] md:bottom-24",
         // Une seule animation à la fois : entrée (nb-rise) puis, à la sortie,
         // fondu nb-leave pendant lequel le panneau ignore les interactions.
         closing ? "nb-leave pointer-events-none" : "nb-rise",

@@ -56,10 +56,22 @@ export function QueuePanel({
   const skeletonCount = filling ? Math.max(0, TARGET_ROWS - remaining) : 0;
 
   return (
-    <aside
-      aria-label="File de lecture"
-      className={cn(
-        "bg-surface border-border fixed top-2 right-2 bottom-24 z-40 flex w-80 max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-transform duration-300",
+    <>
+      {/* Voile tactile : sur mobile, la file devient un panneau fenêtré dont le
+          fond est recouvert ; la fermer se fait d'un tap hors du panneau. Le
+          voile est absent sur desktop : les overlays y sont secondaires. */}
+      <div
+        onClick={onClose}
+        aria-hidden
+        className={cn(
+          "fixed inset-0 z-40 bg-black/50 transition-opacity md:hidden",
+          open ? "opacity-100" : "pointer-events-none opacity-0",
+        )}
+      />
+      <aside
+        aria-label="File de lecture"
+        className={cn(
+          "bg-surface border-border fixed top-2 right-2 bottom-32 z-40 flex w-80 max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-transform duration-300 md:bottom-24",
         open ? "translate-x-0" : "translate-x-[calc(100%+0.5rem)]",
       )}
     >
@@ -188,5 +200,6 @@ export function QueuePanel({
         )}
       </ScrollArea>
     </aside>
+    </>
   );
 }

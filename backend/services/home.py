@@ -17,10 +17,18 @@ import time
 from services import covers
 from services.db_access import hist_read, recent_genre
 from services.editorial import FALLBACK_INTRO, FALLBACK_TITLE, llm_copy
+from services.genres import COLD_START_GENRES
 from services.recommendation import get_recommendation
 from services.state import _tprint
 
 HOME_TTL = 900  # 15 min : une selection d'accueil ne bouge pas vite
+
+# Amorce de premier lancement : sans historique ni note, l'accueil n'a aucun
+# signal. On interroge le moteur avec un genre large (contexte explicite) et on
+# garde le premier qui rend des titres — plutot que de laisser la page vide.
+COLD_START_TITLE = "À découvrir"
+COLD_START_INTRO = ("Une sélection pour démarrer : lance un titre, l'IA affinera "
+                    "au fil de tes écoutes.")
 
 _LOCK = threading.Lock()
 _CACHE: dict = {}
@@ -73,6 +81,33 @@ def _gather(genre: str, want: int = 4) -> list:
     return picked[:want]
 
 
+def _cold_start_tracks(want: int = 4) -> tuple[list, str]:
+    """Selection de premier lancement (aucun historique, aucun signal).
+
+    Le moteur de reco refuse de tourner sans contexte : on lui en donne un
+    explicite (genre large) et on garde le premier genre qui rend des titres.
+    """
+    for genre in COLD_START_GENRES:
+        try:
+            data = json.loads(get_recommendation(genre, force_genre_filter=True))
+        except Exception as exc:
+            _tprint(f"[home] amorce {genre!r} echec : {exc}")
+            continue
+        picked, seen = [], set()
+        for track in (data.get("recommendations") if isinstance(data, dict) else None) or []:
+            video_id = track.get("video_id")
+            if not video_id or video_id in seen:
+                continue
+            seen.add(video_id)
+            picked.append(track)
+            if len(picked) >= want:
+                break
+        if picked:
+            _tprint(f"[home] amorce premier lancement : {len(picked)} titres ({genre})")
+            return picked, genre
+    return [], ""
+
+
 def _build():
     """Construit le contenu d'accueil (recos + habillage) et remplace le cache."""
     global _CACHE, _BUILDING
@@ -81,13 +116,20 @@ def _build():
         # Semer sur le genre recent (pas sur le titre exact) : selection
         # pertinente + filtrage qualite du moteur de reco.
         genre = recent_genre()
-        recos = _gather(genre)
-        headline, intro = (
-            llm_copy(recos, genre) if recos
-            else (FALLBACK_TITLE, FALLBACK_INTRO)
-        )
+        cold = not resume and not genre
+        recos = [] if cold else _gather(genre)
+        if cold:
+            recos, genre = _cold_start_tracks()
+        if recos:
+            headline, intro = llm_copy(recos, genre)
+        elif cold:
+            headline, intro = COLD_START_TITLE, COLD_START_INTRO
+        else:
+            headline, intro = FALLBACK_TITLE, FALLBACK_INTRO
         payload = {
-            "ready": bool(resume or recos),
+            # La construction a abouti : le client quitte les squelettes meme si
+            # la selection est vide (il affiche alors une invite a demarrer).
+            "ready": True,
             "headline": headline,
             "intro": intro,
             "genre": genre,

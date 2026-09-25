@@ -1,23 +1,15 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   BrainCircuit,
-  ChevronDown,
-  ChevronUp,
+  ChevronRight,
   Clock,
   Database,
   History,
   Music2,
   Pencil,
-  Search,
   SkipForward,
   Sparkles,
   Star,
@@ -34,39 +26,34 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AvatarPicker } from "@/components/profile/avatar-picker";
 import { AiSettingsForm } from "@/components/profile/ai-settings";
+import { FavoritesDialog } from "@/components/profile/favorites-dialog";
 import { HistoryDialog } from "@/components/profile/history-dialog";
 import { IdentityDialog } from "@/components/profile/identity-dialog";
+import { RatingsDialog } from "@/components/profile/ratings-dialog";
 import { TasteAssistant } from "@/components/profile/taste-assistant";
-import { Rating } from "@/components/layout/rating";
-import { TrackCover } from "@/components/track-cover";
 import { api } from "@/lib/api";
 import { useStore } from "@/lib/store";
-import { coverSizes } from "@/lib/track";
 import { cn } from "cn";
 
 // Onglets du profil : une seule section affichee a la fois, pour aerer.
 const TABS = [
   { id: "identite", label: "Identité", icon: User },
-  { id: "statistiques", label: "Statistiques", icon: Music2 },
   { id: "assistant", label: "Assistant", icon: Sparkles },
   { id: "ia", label: "IA", icon: BrainCircuit },
   { id: "donnees", label: "Données", icon: Database },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
-/** Comparaison tolerante : casse et accents ignores ("gazo" -> "GAZO"). */
-function normalize(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase();
-}
-
-// Listes de notes potentiellement longues : apercu tant que la section n'est pas
-// depliee, rendu par paliers (le DOM ne recoit jamais toute la liste d'un coup).
-const RATINGS_PREVIEW = 6;
-const RATINGS_PAGE = 24;
+/** Le dialogue « Mes notes » fenêtre un palier à la fois : le DOM ne recoit
+ * jamais toute la liste d'un coup, même à des milliers de notes. */
 const NOTICE_MS = 4300; // juste apres la fin de l'animation nb-notice (4200 ms)
+
+/** Aperçu d'artistes favoris affiché dans la carte : le reste — potentiellement
+ * long — s'explore dans FavoritesDialog (recherche + roulement au scroll). */
+const FAVORITES_PREVIEW = 8;
+
+/** Ordre d'affichage des paliers de note, du plus fort au plus faible. */
+const RATING_ORDER = [5, 4, 3, 2, 1] as const;
 
 /** Libellé d'un palier de note, du plus fort au plus faible. */
 const RATING_LABELS: Record<number, string> = {
@@ -96,80 +83,41 @@ function slotLabel(slot?: string | null): string {
   return SLOT_LABELS[slot] ?? slot.charAt(0).toUpperCase() + slot.slice(1);
 }
 
-/** Bloc de resume de la carte d'identite : la valeur porte le regard. */
-function SummaryBlock({
+/** Bloc de resume navigable : la valeur porte le regard, le clic ouvre l'onglet
+ * correspondant (notes et favoris vivent dans l'onglet Donnees, les ecoutes
+ * dans l'historique de Donnees). */
+function SummaryAction({
   icon: Icon,
   value,
   label,
+  target,
+  onNavigate,
 }: {
   icon: typeof User;
   value: string;
   label: string;
+  target: TabId;
+  onNavigate: (tab: TabId) => void;
 }) {
   return (
-    <div className="bg-background/50 border-border/70 rounded-xl border p-4">
-      <Icon className="text-muted-foreground size-5" aria-hidden="true" />
+    <button
+      type="button"
+      onClick={() => onNavigate(target)}
+      aria-label={`${label} : ${value}. Ouvrir l'onglet ${
+        TABS.find((tab) => tab.id === target)?.label ?? ""
+      }`}
+      className="bg-background/50 border-border/70 hover:border-border hover:bg-background/80 focus-visible:ring-ring/60 group rounded-xl border p-4 text-left transition-colors focus-visible:ring-3 focus-visible:outline-none"
+    >
+      <span className="text-muted-foreground flex items-center justify-between">
+        <Icon className="size-5" aria-hidden="true" />
+        <ChevronRight
+          className="text-muted-foreground/70 size-4 transition-transform group-hover:translate-x-0.5"
+          aria-hidden="true"
+        />
+      </span>
       <p className="mt-3 text-2xl font-bold tabular-nums">{value}</p>
       <p className="text-muted-foreground mt-0.5 text-xs">{label}</p>
-    </div>
-  );
-}
-
-/** Bascule « tout afficher / reduire » partagee par les listes longues. */
-function MoreButton({
-  total,
-  open,
-  onToggle,
-}: {
-  total: number;
-  open: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={onToggle}
-      aria-expanded={open}
-      className="text-muted-foreground hover:text-foreground rounded-full text-xs"
-    >
-      {open ? (
-        <ChevronUp className="size-3.5" />
-      ) : (
-        <ChevronDown className="size-3.5" />
-      )}
-      {open ? "Réduire" : `Tout afficher (${total.toLocaleString("fr-FR")})`}
-    </Button>
-  );
-}
-
-/** Champ de recherche local a une liste longue (historique, notes). */
-function ListFilter({
-  value,
-  onChange,
-  placeholder,
-  label,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  label: string;
-}) {
-  return (
-    <div className="relative">
-      <Search
-        className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2"
-        aria-hidden="true"
-      />
-      <input
-        type="search"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        aria-label={label}
-        className="bg-background/50 placeholder:text-muted-foreground focus-visible:ring-ring/50 h-9 w-full rounded-full pr-3 pl-9 text-sm outline-none focus-visible:ring-3 [&::-webkit-search-cancel-button]:hidden"
-      />
-    </div>
+    </button>
   );
 }
 
@@ -179,14 +127,16 @@ function SectionHeading({
   icon: Icon,
   label,
   hint,
+  className,
 }: {
   id: string;
   icon: typeof User;
   label: string;
   hint?: string;
+  className?: string;
 }) {
   return (
-    <div className="flex items-center gap-3">
+    <div className={cn("flex items-center gap-3", className)}>
       <Icon
         className="text-muted-foreground size-4 shrink-0"
         aria-hidden="true"
@@ -214,15 +164,22 @@ function DataCard({
   count,
   action,
   children,
+  className,
 }: {
   icon: typeof User;
   title: string;
   count?: string;
   action?: ReactNode;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <section className="bg-surface border-border overflow-hidden rounded-xl border">
+    <section
+      className={cn(
+        "bg-surface border-border overflow-hidden rounded-xl border",
+        className,
+      )}
+    >
       <header className="border-border/60 flex items-center gap-3 border-b px-4 py-3">
         <span className="bg-background/60 text-muted-foreground grid size-8 shrink-0 place-items-center rounded-lg">
           <Icon className="size-4" aria-hidden="true" />
@@ -252,7 +209,7 @@ function StatCard({
   label: string;
 }) {
   return (
-    <div className="bg-surface rounded-xl p-4">
+    <div className="bg-background/50 border-border/70 rounded-xl border p-4">
       <Icon className="text-muted-foreground size-5" />
       <p className="mt-2 truncate text-xl font-bold tabular-nums" title={value}>
         {value}
@@ -262,7 +219,7 @@ function StatCard({
   );
 }
 
-/** Page Profil : identité, statistiques, assistant des goûts, données récoltées. */
+/** Page Profil : identité (+ stats d'écoute), assistant des goûts, données récoltées. */
 export function ProfileView() {
   // Source unique : profil, notes, favoris et historique viennent du store, qui se
   // resynchronise sur les revisions serveur. Aucune copie locale dans la page.
@@ -271,7 +228,6 @@ export function ProfileView() {
     error,
     ratings,
     favorites,
-    clearRating,
     refreshProfile,
   } = useStore();
 
@@ -285,12 +241,11 @@ export function ProfileView() {
   >(null);
   // Modal historique : la liste complete, dedoublonnee, y est visible.
   const [historyDialog, setHistoryDialog] = useState(false);
-  const [ratingsOpen, setRatingsOpen] = useState(false);
-  // Nombre de notes effectivement rendues (borne le DOM, pas la donnee).
-  const [ratingsLimit, setRatingsLimit] = useState(RATINGS_PAGE);
-  // Filtre local des notes : au-dela de quelques dizaines d'entrees, retrouver
-  // un titre precis devient le besoin principal.
-  const [ratingsQuery, setRatingsQuery] = useState("");
+  // Modal notes : toute la liste s'y consulte (recherche + roulement au
+  // scroll) ; la carte n'affiche que la repartition par palier.
+  const [ratingsDialog, setRatingsDialog] = useState(false);
+  // Modal artistes favoris : apercu borne dans la carte, liste complete ici.
+  const [favoritesDialog, setFavoritesDialog] = useState(false);
   // `id` force le redemarrage de l'animation quand un nouveau message remplace
   // l'ancien.
   const noticeSeq = useRef(0);
@@ -303,6 +258,15 @@ export function ProfileView() {
       ? (wanted as TabId)
       : "identite";
   });
+  // L'onglet suit AUSSI les navigations suivantes : depuis cette page, le
+  // bandeau « Configurer » pointe sur `?tab=ia` — sans cette synchronisation le
+  // lien changeait l'URL sans rien afficher (le composant est déjà monté).
+  const urlTab = useSearchParams().get("tab");
+  useEffect(() => {
+    if (urlTab && TABS.some((item) => item.id === urlTab)) {
+      setTab(urlTab as TabId);
+    }
+  }, [urlTab]);
 
   /** Confirmation ephemere : elle s'efface seule apres quelques secondes. */
   const showNotice = useCallback((text: string) => {
@@ -316,46 +280,16 @@ export function ProfileView() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  function loadMoreRatings() {
-    setRatingsLimit((current) => current + RATINGS_PAGE);
-  }
-
-  const ratingsFilter = ratingsQuery.trim();
-  // Le corps des notes est borne par un scroll interne des qu'il depasse
-  // l'apercu.
-  const ratingsScrolls = ratingsOpen || Boolean(ratingsFilter);
-
-  // Filtre applique aux notes, independamment de ce qui est rendu.
-  const filteredRatings = useMemo(() => {
-    if (!ratingsFilter) return ratings;
-    const needle = normalize(ratingsFilter);
-    return ratings.filter((rated) =>
-      normalize(`${rated.title ?? ""} ${rated.channel ?? ""}`).includes(needle),
-    );
-  }, [ratingsFilter, ratings]);
-
-  // Le rendu est borne par palier : meme depliee ou filtree, la liste ne monte
-  // jamais en entier dans le DOM (des milliers de notes resteraient sinon).
-  const shownRatings = useMemo(() => {
-    if (ratingsFilter) return filteredRatings.slice(0, ratingsLimit);
-    return ratingsOpen
-      ? ratings.slice(0, ratingsLimit)
-      : ratings.slice(0, RATINGS_PREVIEW);
-  }, [ratingsFilter, filteredRatings, ratings, ratingsLimit, ratingsOpen]);
-  const ratingsTotal = ratingsFilter ? filteredRatings.length : ratings.length;
-  const ratingsMore =
-    (ratingsOpen || Boolean(ratingsFilter)) &&
-    shownRatings.length < ratingsTotal;
-  // Répartition des notes par palier : chaque palier devient une famille visuelle.
-  const ratingGroups = useMemo(() => {
-    const buckets = new Map<number, typeof ratings>();
-    for (const rated of shownRatings) {
-      const list = buckets.get(rated.rating) ?? [];
-      list.push(rated);
-      buckets.set(rated.rating, list);
+  // Repartition des notes par palier : affichee en resume sur la carte (la
+  // valeur et l'etoile sautent aux yeux) sans lister les titres bruts — ils se
+  // consultent dans le dialogue, ouvert par le bouton dedie.
+  const tierCounts = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const rated of ratings) {
+      counts.set(rated.rating, (counts.get(rated.rating) ?? 0) + 1);
     }
-    return [...buckets.entries()].sort((a, b) => b[0] - a[0]);
-  }, [shownRatings]);
+    return counts;
+  }, [ratings]);
 
   const identity = profile?.identity;
   const stats = profile?.stats;
@@ -457,7 +391,7 @@ export function ProfileView() {
   const historyCount = overview?.history ?? 0;
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-5xl flex-col gap-4 py-6">
+    <div className="mx-auto flex h-full w-full max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6">
       {/* Retour à l'application : cet écran est atteint depuis la barre du haut.
           `self-start` : le conteneur est une colonne flex, sinon le bouton
           s'étirerait sur toute la largeur (libellé centré). */}
@@ -468,24 +402,30 @@ export function ProfileView() {
         onValueChange={(value) => setTab(value as TabId)}
         className="flex min-h-0 flex-1 flex-col gap-4"
       >
-        {/* Onglets centres : une seule section visible a la fois. */}
-        <TabsList aria-label="Sections du profil" className="self-center">
-          {TABS.map(({ id, label, icon: Icon }) => (
-            <TabsTrigger key={id} value={id}>
-              <Icon className="size-4" aria-hidden="true" />
-              {label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+          {/* Onglets centres : une seule section visible a la fois. Sur mobile,
+              segments egaux pleine largeur (icones masquees, libelle seul). */}
+          <TabsList aria-label="Sections du profil" className="w-full md:w-auto md:self-center">
+            {TABS.map(({ id, label, icon: Icon }) => (
+              <TabsTrigger
+                key={id}
+                value={id}
+                className="max-sm:min-h-11 max-sm:flex-1 max-sm:justify-center max-sm:gap-1 max-sm:px-2 max-sm:text-xs"
+              >
+                <Icon className="size-4 max-sm:hidden" aria-hidden="true" />
+                {label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
 
-        <TabsContent value="identite" className="overflow-y-auto">
-          {/* Carte d'identite pleine hauteur : l'identite occupe le haut, le
-              resume est ancre en bas — l'espace est compose, pas laisse vide. */}
+        <TabsContent value="identite" className="flex flex-col overflow-y-auto overscroll-contain">
+          {/* Carte d'identite : profil, stats d'ecoute, et resume navigable
+              (ecoutes/notes/favoris) colle en bas. La carte est centree
+              verticalement ; le resume reste ancre a sa base. */}
           <section
             aria-labelledby="identity-name"
-            className="bg-surface border-border flex min-h-full flex-col gap-6 rounded-xl border p-6 sm:p-8"
+            className="bg-surface border-border my-auto flex flex-col gap-4 rounded-xl border p-6 sm:p-8"
           >
-            <div className="flex flex-1 flex-col items-center justify-center gap-6 sm:flex-row sm:items-center sm:gap-8">
+            <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-center sm:gap-8">
               <AvatarPicker
                 avatar={identity?.avatar ?? ""}
                 displayName={identity?.display_name ?? ""}
@@ -503,43 +443,18 @@ export function ProfileView() {
                   {identity?.display_name || "Auditeur"}
                 </h1>
                 <Button
-                  variant="outline"
-                  size="lg"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setEditIdentity(true)}
                   className="rounded-full"
                 >
-                  <Pencil className="size-4" />
+                  <Pencil className="size-3.5" />
                   Modifier mon identité
                 </Button>
               </div>
             </div>
 
-            <div className="border-border/60 grid grid-cols-1 gap-4 border-t pt-6 sm:grid-cols-3">
-              <SummaryBlock
-                icon={Music2}
-                value={historyCount.toLocaleString("fr-FR")}
-                label={historyCount > 1 ? "écoutes" : "écoute"}
-              />
-              <SummaryBlock
-                icon={Star}
-                value={ratings.length.toLocaleString("fr-FR")}
-                label={ratings.length > 1 ? "notes" : "note"}
-              />
-              <SummaryBlock
-                icon={Users}
-                value={String(favorites.length)}
-                label={
-                  favorites.length > 1 ? "artistes favoris" : "artiste favori"
-                }
-              />
-            </div>
-          </section>
-        </TabsContent>
-
-        {/* Statistiques */}
-        <TabsContent value="statistiques" className="overflow-y-auto">
-          <div className="flex min-h-full flex-col justify-center gap-3">
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <div className="border-border/60 grid grid-cols-2 gap-4 border-t pt-4 lg:grid-cols-4">
               <StatCard
                 icon={Music2}
                 value={String(stats?.plays_total ?? 0)}
@@ -561,42 +476,74 @@ export function ProfileView() {
                 label="Taux de skip"
               />
             </div>
-            <p className="text-muted-foreground mt-3 text-xs">
+            <p className="text-muted-foreground text-xs">
               {overview?.playlists ?? 0} playlists ·{" "}
               {overview?.cached_genres ?? 0} genres analysés
               {stats?.duree_moyenne
                 ? ` · durée moyenne ${Math.round(stats.duree_moyenne)} s`
                 : ""}
             </p>
-          </div>
+
+            <div className="border-border/60 grid grid-cols-1 gap-4 border-t pt-4 sm:grid-cols-3">
+              <SummaryAction
+                icon={Music2}
+                value={historyCount.toLocaleString("fr-FR")}
+                label={historyCount > 1 ? "écoutes" : "écoute"}
+                target="donnees"
+                onNavigate={setTab}
+              />
+              <SummaryAction
+                icon={Star}
+                value={ratings.length.toLocaleString("fr-FR")}
+                label={ratings.length > 1 ? "notes" : "note"}
+                target="donnees"
+                onNavigate={setTab}
+              />
+              <SummaryAction
+                icon={Users}
+                value={String(favorites.length)}
+                label={
+                  favorites.length > 1 ? "artistes favoris" : "artiste favori"
+                }
+                target="donnees"
+                onNavigate={setTab}
+              />
+            </div>
+          </section>
         </TabsContent>
 
         {/* Assistant dédié aux goûts : la conversation vit dans l'onglet. */}
         <TabsContent
           value="assistant"
           forceMount
-          className="flex min-h-0 flex-col data-[state=inactive]:hidden"
+          className="flex flex-col overflow-y-auto overscroll-contain data-[state=inactive]:hidden"
         >
           <TasteAssistant active={tab === "assistant"} />
         </TabsContent>
 
         {/* Modèle d'IA : fournisseur, URL, modèle, clé (masquée). */}
-        <TabsContent value="ia" className="overflow-y-auto">
-          <div className="space-y-8">
+        <TabsContent value="ia" className="flex flex-col overflow-y-auto overscroll-contain">
+          <div className="my-auto w-full space-y-8">
             <AiSettingsForm />
           </div>
         </TabsContent>
 
         {/* Mes données */}
-        <TabsContent value="donnees" className="overflow-y-auto">
-          <div className="space-y-8">
-            {/* Zone 1 : les donnees que l'utilisateur consulte et gere. */}
-            <section aria-labelledby="data-owned-title" className="space-y-4">
+        <TabsContent value="donnees" className="flex flex-col overflow-y-auto overscroll-contain">
+          <div className="my-auto w-full space-y-8">
+            {/* Zone 1 : les donnees que l'utilisateur consulte et gere.
+                Deux colonnes des que l'ecran le permet : les cartes sont
+                compactes (plus de liste inline), elles s'equilibrent. */}
+            <section
+              aria-labelledby="data-owned-title"
+              className="grid gap-4 md:grid-cols-2"
+            >
               <SectionHeading
                 id="data-owned-title"
                 icon={Database}
                 label="Tes données"
                 hint="Ce que le moteur a appris de toi"
+                className="md:col-span-2"
               />
 
               <DataCard
@@ -645,138 +592,68 @@ export function ProfileView() {
                 title="Titres notés"
                 count={`${ratings.length.toLocaleString("fr-FR")} note${ratings.length > 1 ? "s" : ""}`}
               >
-                {ratings.length > RATINGS_PREVIEW && (
-                  <div className="mb-4">
-                    <ListFilter
-                      value={ratingsQuery}
-                      onChange={setRatingsQuery}
-                      placeholder="Rechercher un titre noté…"
-                      label="Rechercher dans les titres notés"
-                    />
-                    {ratingsFilter && (
-                      <p
-                        role="status"
-                        className="text-muted-foreground mt-2 text-xs"
-                      >
-                        {ratingsTotal.toLocaleString("fr-FR")} résultat
-                        {ratingsTotal > 1 ? "s" : ""}
-                      </p>
-                    )}
-                  </div>
-                )}
-
                 {ratings.length === 0 ? (
                   <p className="text-muted-foreground text-sm">
                     Aucune note pour l&apos;instant. Note un titre depuis la
                     recherche ou la barre de lecture pour le retrouver ici.
                   </p>
-                ) : ratingGroups.length === 0 ? (
-                  <p className="text-muted-foreground text-sm">
-                    Aucun titre ne correspond à « {ratingsFilter} ».
-                  </p>
                 ) : (
-                  <div
-                    className={cn(
-                      "space-y-5",
-                      ratingsScrolls && "max-h-[26rem] overflow-y-auto pr-1",
-                    )}
-                  >
-                    {ratingGroups.map(([value, list]) => (
-                      <div key={value}>
-                        <div className="mb-2 flex items-baseline gap-2">
-                          <h4 className="text-sm font-medium">
-                            {RATING_LABELS[value] ?? "Notés"}
-                          </h4>
-                          <span
-                            className="text-primary flex items-center gap-0.5"
-                            aria-hidden="true"
+                  <div className="space-y-4">
+                    {/* Repartition par palier : l'echelle 5→1 tient en un coup
+                        d'oeil (valeur + etoiles), les titres restent dans le
+                        dialogue ouvert par le bouton dedie. */}
+                    <ul className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                      {RATING_ORDER.map((tier) => {
+                        const count = tierCounts.get(tier) ?? 0;
+                        if (count === 0) return null;
+                        return (
+                          <li
+                            key={tier}
+                            title={RATING_LABELS[tier] ?? "Notés"}
+                            className="bg-background/50 border-border/70 flex flex-col items-center gap-1 rounded-lg border p-2 text-center"
                           >
-                            {Array.from({ length: value }, (_, i) => (
-                              <Star key={i} className="size-3 fill-current" />
-                            ))}
-                          </span>
-                          <span className="text-muted-foreground text-xs">
-                            {list.length} titre{list.length > 1 ? "s" : ""}
-                          </span>
-                        </div>
-                        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          {list.map((rated) => (
-                            <li
-                              key={rated.video_id}
-                              className="group/row bg-background/40 hover:bg-surface-hover flex items-center gap-3 rounded-lg p-2 transition-colors"
+                            <span
+                              className="text-primary flex items-center gap-0.5"
+                              aria-hidden="true"
                             >
-                              <TrackCover
-                                videoId={rated.video_id}
-                                title={rated.title}
-                                sizes={coverSizes(48)}
-                                className="size-12 shrink-0"
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm">
-                                  {rated.title}
-                                </span>
-                                <span className="text-muted-foreground block truncate text-xs">
-                                  {rated.channel}
-                                </span>
-                              </span>
-                              {/* Le palier porte déjà les étoiles : le sélecteur ne
-                                  s'affiche qu'au survol/focus de la ligne (on peut
-                                  toujours corriger la note), et reste visible sur
-                                  les écrans tactiles, où le survol n'existe pas. */}
-                              <Rating
-                                videoId={rated.video_id}
-                                title={rated.title}
-                                channel={rated.channel}
-                                className="shrink-0 opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100"
-                              />
-                              <button
-                                type="button"
-                                aria-label={`Retirer la note de ${rated.title}`}
-                                onClick={() => void clearRating(rated.video_id)}
-                                className="text-muted-foreground hover:text-destructive shrink-0 rounded-full p-1"
-                              >
-                                <X className="size-4" />
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
+                              {Array.from({ length: tier }, (_, i) => (
+                                <Star key={i} className="size-2.5 fill-current" />
+                              ))}
+                            </span>
+                            <span className="text-lg font-bold leading-none tabular-nums">
+                              {count.toLocaleString("fr-FR")}
+                            </span>
+                            <span className="text-muted-foreground max-w-full truncate text-xs">
+                              {RATING_LABELS[tier] ?? "Notés"}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setRatingsDialog(true)}
+                      className="rounded-full"
+                    >
+                      <Star className="size-4" />
+                      Voir mes notes
+                    </Button>
                   </div>
                 )}
 
-                {ratings.length > RATINGS_PREVIEW && (
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    {!ratingsFilter && (
-                      <MoreButton
-                        total={ratings.length}
-                        open={ratingsOpen}
-                        onToggle={() => setRatingsOpen((value) => !value)}
-                      />
-                    )}
-                    {ratingsMore && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={loadMoreRatings}
-                        className="text-muted-foreground hover:text-foreground rounded-full text-xs"
-                      >
-                        Charger plus (
-                        {Math.min(
-                          RATINGS_PAGE,
-                          ratingsTotal - shownRatings.length,
-                        ).toLocaleString("fr-FR")}
-                        )
-                      </Button>
-                    )}
-                  </div>
-                )}
+                <RatingsDialog
+                  open={ratingsDialog}
+                  onOpenChange={setRatingsDialog}
+                />
               </DataCard>
 
               <DataCard
                 icon={Users}
                 title="Artistes favoris"
                 count={String(favorites.length)}
+                className="md:col-span-2"
               >
                 {favorites.length === 0 ? (
                   <p className="text-muted-foreground text-sm">
@@ -784,24 +661,51 @@ export function ProfileView() {
                     automatiquement.
                   </p>
                 ) : (
-                  <ul className="flex flex-wrap gap-2">
-                    {favorites.map((channel) => (
-                      <li key={channel}>
-                        <span className="border-border flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm">
-                          {channel}
-                          <button
-                            type="button"
-                            aria-label={`Retirer ${channel} des favoris`}
-                            onClick={() => void removeFavorite(channel)}
-                            className="text-muted-foreground hover:text-destructive"
-                          >
-                            <X className="size-3.5" />
-                          </button>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                  <div className="space-y-4">
+                    {/* Apercu borne : la liste complete (potentiellement
+                        longue) s'explore dans le dialogue, comme les notes. */}
+                    <ul className="flex flex-wrap gap-2">
+                      {favorites.slice(0, FAVORITES_PREVIEW).map((channel) => (
+                        <li key={channel}>
+                          <span className="border-border flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm">
+                            {channel}
+                            <button
+                              type="button"
+                              aria-label={`Retirer ${channel} des favoris`}
+                              onClick={() => void removeFavorite(channel)}
+                              className="text-muted-foreground hover:text-destructive"
+                            >
+                              <X className="size-3.5" />
+                            </button>
+                          </span>
+                        </li>
+                      ))}
+                      {favorites.length > FAVORITES_PREVIEW ? (
+                        <li>
+                          <span className="border-border text-muted-foreground rounded-full border border-dashed px-3 py-1.5 text-sm">
+                            +{favorites.length - FAVORITES_PREVIEW} autres
+                          </span>
+                        </li>
+                      ) : null}
+                    </ul>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setFavoritesDialog(true)}
+                      className="rounded-full"
+                    >
+                      <Users className="size-4" />
+                      Voir tous les artistes
+                    </Button>
+                  </div>
                 )}
+
+                <FavoritesDialog
+                  open={favoritesDialog}
+                  onOpenChange={setFavoritesDialog}
+                  onRemove={(channel) => void removeFavorite(channel)}
+                />
               </DataCard>
             </section>
 

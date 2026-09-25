@@ -21,7 +21,7 @@ export function ChatFab({
       aria-expanded={open}
       onClick={onToggle}
       className={cn(
-        "fixed right-5 bottom-28 z-40 size-11 rounded-full shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-all",
+        "fixed right-5 bottom-36 z-40 size-11 rounded-full shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-all md:bottom-28",
         "bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-105",
       )}
     >

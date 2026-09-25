@@ -172,6 +172,9 @@ export default function Home() {
   const { play, togglePause, loading, state } = usePlayer();
   const [content, setContent] = useState<HomeContent | null>(null);
   const [failed, setFailed] = useState(false);
+  // Les tentatives sont bornées : au-delà, on sort des squelettes pour afficher
+  // un état explicite plutôt que de laisser la page en attente pour toujours.
+  const [exhausted, setExhausted] = useState(false);
   const retryRef = useRef<{ timer: number | null; tries: number }>({
     timer: null,
     tries: 0,
@@ -189,9 +192,13 @@ export default function Home() {
         if (!active) return;
         setContent(data);
         setFailed(false);
-        if (!data.ready && retry.tries < MAX_RETRIES) {
-          retry.tries += 1;
-          retry.timer = window.setTimeout(load, RETRY_DELAY);
+        if (!data.ready) {
+          if (retry.tries < MAX_RETRIES) {
+            retry.tries += 1;
+            retry.timer = window.setTimeout(load, RETRY_DELAY);
+          } else {
+            setExhausted(true);
+          }
         }
       } catch {
         if (active) setFailed(true);
@@ -224,7 +231,7 @@ export default function Home() {
   const resumePlaying = Boolean(liveTrack && !state?.paused);
   const tracks = content?.tracks ?? [];
   const ready = Boolean(content?.ready);
-  const pending = !ready && !failed;
+  const pending = !ready && !failed && !exhausted;
 
   return (
     <div className="mx-auto max-w-5xl space-y-8 py-6">

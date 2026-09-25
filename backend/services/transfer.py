@@ -323,12 +323,14 @@ def relancer_preparation(session: str, token: str, video_id: str):
     if track is None:
         return
     if preparation.chemin(video_id) is None:
+        # Relance explicite du telephone : on force, sinon le plafond ECHECS_MAX
+        # ferait de « Réessayer » un no-op silencieux pendant 24 h (ECHEC_TTL).
         preparation.demander(video_id, {
             "titre": track.get("titre", ""),
             "chaine": track.get("chaine", ""),
             "album": entry.get("name", ""),
             "annee": "",
-        })
+        }, forcer=True)
 
 
 def source_audio(session: str, token: str, video_id: str):

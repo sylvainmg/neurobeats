@@ -28,7 +28,15 @@ DEFAULTS = {
     "openai": {"base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini", "api_key": "sk-"},
     "anthropic": {"base_url": "https://api.anthropic.com",
                   "model": "claude-3-5-haiku-latest", "api_key": ""},
+    # Modele telecharge et servi LOCALEMENT par llama-server (app desktop).
+    # base_url/model sont derives de l'etat du serveur par _stored() : la config
+    # persistee ne contient que `model` (l'id du catalogue).
+    "embedded": {"base_url": "", "model": "", "api_key": "sk-local"},
 }
+# Fournisseurs selectionnables. Le modele local (`embedded`) est l'un d'eux :
+# le choix est une liste plate, et un seul element est actif a la fois.
+PROVIDERS = ("ollama", "lmstudio", "openai", "anthropic", "embedded")
+DEFAULT_KIND = "ollama"
 # Taille de sortie bornee : suffisante pour une reponse + un tour d'outils.
 DEFAULT_MAX_TOKENS = 2048
 # Libelle utilitaire pour le test de connexion.
@@ -37,34 +45,82 @@ PROVIDER_LABELS = {
     "lmstudio": "LM Studio",
     "openai": "BYOK (OpenAI-compatible)",
     "anthropic": "Anthropic Claude",
+    "embedded": "Modèle local (téléchargé)",
 }
 
 # ----------------------------------------------------- acces config (profil SQLite)
-_DEFAULTS_COPY = json.loads(json.dumps(DEFAULTS))
+
+
+def _normalise_selection(raw: dict) -> dict:
+    """ Selection canonique : ``{"kind", "model"?}`` — UNIQUE source de verite.
+
+    Seul format ecrit depuis `set_selection` ; l'ancien couple
+    ``provider`` + ``embedded.model`` est encore lu le temps de la migration.
+    Un fournisseur local sans modele choisi retombe sur le defaut : sinon la
+    selection serait inutilisable.
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    selection = raw.get("selection")
+    if isinstance(selection, dict):
+        kind = str(selection.get("kind") or DEFAULT_KIND)
+        model = str(selection.get("model") or "")
+    else:  # migration de l'ancien format
+        kind = str(raw.get("provider") or DEFAULT_KIND)
+        model = str((raw.get("embedded") or {}).get("model") or "")
+    if kind not in PROVIDERS:
+        kind = DEFAULT_KIND
+    if kind == "embedded" and not model:
+        return {"kind": DEFAULT_KIND}
+    if kind == "embedded":
+        return {"kind": "embedded", "model": model}
+    return {"kind": kind}
+
+
+def active_selection() -> dict:
+    """Selection IA courante — le SEUL point de lecture du choix."""
+    return _normalise_selection(profile_read().get("ai") or {})
 
 
 def _stored():
-    """Config brute persistee (avec secrets) ; valeurs par defaut si jamais reglee."""
+    """Config brute persistee (avec secrets) ; valeurs par defaut si jamais reglee.
+
+    ``provider`` est derive de la selection : il n'existe qu'une seule source de
+    verite, et `_stored` ne fait que la presenter dans la forme attendue par le
+    reste du module.
+    """
     raw = profile_read().get("ai")
-    if not isinstance(raw, dict) or not raw.get("provider"):
-        return json.loads(json.dumps(DEFAULTS))
+    raw = raw if isinstance(raw, dict) else {}
+    selection = _normalise_selection(raw)
     out = json.loads(json.dumps(DEFAULTS))
+    out["provider"] = selection["kind"]
     for key, value in raw.items():
-        if key == "provider" and value in DEFAULTS:
-            out["provider"] = value
-        elif isinstance(value, dict):
+        if key in PROVIDERS and isinstance(value, dict):
             out.setdefault(key, {}).update({k: v for k, v in value.items() if v is not None})
+    if selection["kind"] == "embedded":
+        # `base_url` est derive du serveur local en cours d'execution ; le
+        # modele servi est celui de la selection (le moteur ne sert jamais un
+        # autre modele, cf. `models.ensure_embedded`).
+        out.setdefault("embedded", {})["model"] = selection.get("model", "")
+        try:
+            from services import models
+            state = models.embedded_state()
+            if state:
+                out["embedded"]["base_url"] = f"http://127.0.0.1:{state['port']}/v1"
+        except Exception:
+            pass
     return out
 
 
 def get_ai_config(tool: bool = True) -> str:
-    """Config du modele IA, secrets masques, en JSON (contrat `run_tool`).
+    """Config du modele IA, secrets masques, en JSON (contrat ``run_tool``).
 
-    `api_key` n'y figure jamais en clair : le front n'affiche que le masque.
+    Expose la selection canonique (``selection``) et le fournisseur derive : les
+    deux viennent du meme enregistrement, donc aucune divergence possible.
     """
     cfg = _stored()
-    provider = cfg["provider"]
-    out = {"provider": provider, **{k: dict(v) for k, v in cfg.items() if isinstance(v, dict)}}
+    kind = cfg["provider"]
+    out = {"selection": active_selection(), "provider": kind,
+           **{k: dict(v) for k, v in cfg.items() if isinstance(v, dict)}}
     for name in cfg:
         block = out.get(name)
         if isinstance(block, dict) and "api_key" in block:
@@ -72,7 +128,7 @@ def get_ai_config(tool: bool = True) -> str:
             if _has_api_key(cfg, name):
                 block["api_key_masked"] = mask_api_key(cfg[name]["api_key"])
     out["configured"] = is_configured(cfg)
-    out["label"] = PROVIDER_LABELS.get(provider, provider)
+    out["label"] = PROVIDER_LABELS.get(kind, kind)
     return json.dumps(out, ensure_ascii=False)
 
 
@@ -94,10 +150,10 @@ def _apply_overrides(cfg: dict, provider: str = None, blocks: dict = None) -> di
     Sert aussi au test de connexion : on maquille une config candidate avec les
     valeurs du formulaire (jamais persistees) le temps d'une reponse.
     """
-    if provider in DEFAULTS:
+    if provider in PROVIDERS:
         cfg["provider"] = provider
     for name, values in (blocks or {}).items():
-        if name not in DEFAULTS or not isinstance(values, dict):
+        if name not in PROVIDERS or not isinstance(values, dict):
             continue
         current = cfg.setdefault(name, {})
         for field, value in values.items():
@@ -116,24 +172,126 @@ def _apply_overrides(cfg: dict, provider: str = None, blocks: dict = None) -> di
     return cfg
 
 
-def save_ai_config(provider: str = None, **blocks) -> str:
-    """Enregistre la config IA dans le profil.
+def migrate_ai_selection() -> bool:
+    """Migre l'ancien format (``provider`` + ``embedded.model``) vers ``selection``.
 
-    Args:
-        provider: Fournisseur actif (`DEFAULTS` si absent).
-        blocks: Par fournisseur, les champs a ecraser (host, model, api_key…).
-            `api_key=None` conserve la cle existante ; `api_key=""` l'efface.
+    Ecrit une seule fois : une fois migre, ``selection`` est la seule forme
+    persistee, donc la seule source de verite du choix. Les cles de l'ancien
+    format (``provider``, ``last_external_provider``, ``embedded``) sont
+    supprimees pour qu'aucune lecture ne puisse retomber dessus.
 
     Returns:
-        JSON de la config masquee (contract `run_tool`).
+        True si le profil a ete reecrit.
     """
-    cfg = _stored()
-    _apply_overrides(cfg, provider, blocks)
     profile = profile_read()
-    profile["ai"] = cfg
+    raw = profile.get("ai")
+    if not isinstance(raw, dict) or not raw:
+        return False
+    if isinstance(raw.get("selection"), dict):
+        return False
+    selection = _normalise_selection(raw)
+    # Le choix local vit desormais dans `selection` : le bloc `embedded` de
+    # l'ancien format est ecarte, sinon il resterait un second porteur du modele.
+    record = {k: v for k, v in raw.items()
+              if k in PROVIDERS and k != "embedded" and isinstance(v, dict)}
+    record["selection"] = selection
+    profile["ai"] = record
     profile_write(profile)
-    _tprint(f"[llm] config IA enregistree : provider={cfg['provider']}")
+    _tprint(f"[llm] migration du choix IA -> {selection}")
+    return True
+
+
+def set_selection(kind: str = None, model: str = None, **blocks) -> str:
+    """Ecrit la selection IA — VOIE D'ECRITURE UNIQUE du choix.
+
+    Persiste ``selection`` (+ les blocs de configuration fournis), puis aligne le
+    moteur local : charge le modele choisi, ou l'arrete si le choix est externe.
+
+    Args:
+        kind: Fournisseur choisi (``PROVIDERS``). Invalide -> ValueError.
+        model: Id du modele local, requis si ``kind == "embedded"``.
+        blocks: Par fournisseur, les champs a ecraser (host, model, api_key...).
+            ``api_key=None`` conserve la cle ; ``api_key=""`` l'efface.
+
+    Returns:
+        JSON de la configuration masquee (contrat ``run_tool``).
+    """
+    from services import models
+
+    selection = active_selection()
+    chosen = str(kind or selection["kind"])
+    if chosen not in PROVIDERS:
+        raise ValueError(f"Fournisseur inconnu : {chosen!r}")
+    if chosen == "embedded":
+        wanted = str(model or selection.get("model") or "")
+        if not wanted:
+            raise ValueError("Aucun modele local choisi.")
+        if not models.is_downloaded(wanted):
+            raise ValueError(f"Modele local non telecharge : {wanted!r}")
+        selection = {"kind": "embedded", "model": wanted}
+    else:
+        selection = {"kind": chosen}
+
+    profile = profile_read()
+    record = profile.get("ai")
+    record = dict(record) if isinstance(record, dict) else {}
+    # Une seule source : on remplace le choix et on retire les cles de l'ancien
+    # format pour qu'aucune lecture ne puisse retomber dessus.
+    record.pop("provider", None)
+    record.pop("last_external_provider", None)
+    record.pop("embedded", None)
+    record["selection"] = selection
+    for name, values in (blocks or {}).items():
+        if name == "embedded" or name not in PROVIDERS or not isinstance(values, dict):
+            continue
+        current = record.setdefault(name, {})
+        for field, value in values.items():
+            if field not in ("host", "base_url", "model", "api_key"):
+                continue
+            if field == "api_key":
+                if value == "":
+                    current["api_key"] = ""
+                elif value is not None:
+                    current["api_key"] = str(value).strip()
+            else:
+                current[field] = (value or "").strip()
+    profile["ai"] = record
+    profile_write(profile)
+    _tprint(f"[llm] selection IA : {selection}")
+
+    align_engine(selection)
     return get_ai_config()
+
+
+def align_engine(selection: dict = None) -> None:
+    """Aligne le moteur local sur la selection (charge, ou arrete).
+
+    Le moteur ne sert JAMAIS un autre modele que celui choisi : changer de
+    selection decharge l'ancien avant de charger le nouveau.
+    """
+    from services import models
+
+    selection = selection or active_selection()
+    if selection["kind"] == "embedded":
+        models.switch_embedded(selection["model"])
+    else:
+        models.stop_embedded()
+
+
+def save_ai_config(provider: str = None, selection: dict = None, **blocks) -> str:
+    """Alias de `set_selection` (compatibilite du contrat ``run_tool``).
+
+    Accepte l'ancienne forme ``provider=...`` comme la nouvelle
+    ``selection={"kind", "model"}`` : les deux convergent vers la meme ecriture.
+    """
+    kind = provider
+    model = None
+    if isinstance(selection, dict) and selection.get("kind"):
+        kind = selection.get("kind")
+        model = selection.get("model")
+    elif isinstance(blocks.get("embedded"), dict):
+        model = blocks["embedded"].get("model")
+    return set_selection(kind, model=model, **blocks)
 
 
 def _has_api_key(cfg: dict, name: str) -> bool:
@@ -145,10 +303,19 @@ def is_configured(cfg: dict | None = None) -> bool:
 
     Ollama/LM Studio : une URL de base suffit (modeles locaux sans cle).
     OpenAI/Anthropic : une cle API est requise.
+    Embedded : un modele est choisi et le moteur local le charge (ou l'a charge).
     """
     cfg = cfg or _stored()
     provider = cfg["provider"]
     block = cfg.get(provider) or {}
+    if provider == "embedded":
+        try:
+            from services import models
+            # `loading` compte comme configure : le modele choisi arrive, et
+            # afficher « non configure » pendant le chargement serait faux.
+            return models.embedded_status().get("state") in ("loading", "ready")
+        except Exception:
+            return False
     if provider == "anthropic":
         return bool(block.get("api_key")) and bool(block.get("base_url"))
     if provider == "openai":
@@ -169,11 +336,21 @@ def ai_status() -> dict:
 def _default_client(provider: str, timeout: float, cfg: dict = None):
     """Instancie le client SDK du fournisseur (jamais au chargement du module)."""
     block = (cfg if cfg is not None else _stored())[provider]
+    if provider == "embedded":
+        # Un seul modele actif : le serveur local est le seul chemin. S'il n'est
+        # pas charge, on le dit clairement au lieu de retomber (ou d'echouer) sur
+        # un fournisseur externe.
+        from services import models
+        if not models.embedded_ready():
+            raise RuntimeError(
+                "Le modèle local n'est pas encore chargé : son chargement se suit "
+                "dans Profil → IA."
+            )
     if provider == "ollama":
         import ollama  # import local : Ollama reste le repli, jamais obligatoire ici
         return ollama.Client(host=block.get("host") or DEFAULTS["ollama"]["host"],
                              timeout=timeout)
-    if provider == "lmstudio" or provider == "openai":
+    if provider in ("lmstudio", "openai", "embedded"):
         from openai import OpenAI
         return OpenAI(base_url=block.get("base_url") or DEFAULTS[provider]["base_url"],
                       api_key=block.get("api_key") or "sk-placeholder",
@@ -187,6 +364,12 @@ def _default_client(provider: str, timeout: float, cfg: dict = None):
 
 
 def _model(provider: str, cfg: dict = None) -> str:
+    """Modele a interroger pour le fournisseur courant.
+
+    Le modele vient de la selection (source unique). Pour ``embedded``, le
+    moteur ne sert jamais un autre modele que celui choisi : il n'y a donc rien
+    a deduire de l'etat d'execution.
+    """
     block = (cfg if cfg is not None else _stored())[provider]
     return (block.get("model") or "").strip() or DEFAULTS[provider]["model"]
 
@@ -381,7 +564,7 @@ def chat(messages: list, tools: list | None = None, *, model: str = None,
                                options=options or None, format="json" if json_mode else None)
         return {"message": dict(response.get("message") or {})}
 
-    if provider in ("lmstudio", "openai"):
+    if provider in ("lmstudio", "openai", "embedded"):
         client = _default_client(provider, timeout, cfg)
         kwargs = {
             "model": selected,
@@ -461,7 +644,7 @@ def chat_stream(messages: list, tools: list | None = None, *, model: str = None,
             yield {"message": dict(chunk.get("message") or {})}
         return
 
-    if provider in ("lmstudio", "openai"):
+    if provider in ("lmstudio", "openai", "embedded"):
         client = _default_client(provider, timeout, cfg)
         kwargs = {
             "model": selected,
@@ -575,6 +758,11 @@ def test_connection(timeout: float = 15.0, provider: str = None, **blocks) -> st
         cfg = _stored()
     provider = cfg["provider"]
     if not is_configured(cfg):
+        if provider == "embedded":
+            return json.dumps({"ok": False, "provider": provider,
+                               "error": "Modèle local pas encore chargé : son "
+                                        "chargement se suit dans Profil → IA."},
+                              ensure_ascii=False)
         return json.dumps({"ok": False,
                            "error": "Configuration incomplete (cle API ou URL manquante)."},
                           ensure_ascii=False)

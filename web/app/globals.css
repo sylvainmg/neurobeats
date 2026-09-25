@@ -225,6 +225,12 @@
     @apply font-sans;
   }
 
+  /* Interactions tactiles : supprime le délai de double-tap (300 ms) sans
+     bloquer le défilement (manipulation = pan + pinch-zoom conservés). */
+  * {
+    touch-action: manipulation;
+  }
+
   /* Aucune sélection de texte dans l'application (UI de type lecteur). */
   * {
     -webkit-user-select: none;

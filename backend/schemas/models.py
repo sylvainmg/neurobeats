@@ -78,15 +78,62 @@ class AvatarRequest(BaseModel):
 
 
 class AiSettingsRequest(BaseModel):
-    """Reglages IA : fournisseur actif + blocs par provider (secrets inclus).
+    """Reglages IA : selection unique + blocs par provider (secrets inclus).
 
-    `api_key` absent (None) = conserve l'existante ; `""` = l'efface.
+    ``selection`` est la source de verite du choix (``{"kind", "model"?}``) :
+    l'enregistrer propage le choix partout et desélectionne tout le reste.
+    ``provider`` reste accepte pour compatibilite (equivalent a
+    ``selection.kind``). `api_key` absent (None) = conserve l'existante ; `""` =
+    l'efface.
     """
+    selection: Optional[dict] = None
     provider: Optional[str] = None
     ollama: Optional[dict] = None
     lmstudio: Optional[dict] = None
     openai: Optional[dict] = None
     anthropic: Optional[dict] = None
+    embedded: Optional[dict] = None
+
+
+class ModelDownloadRequest(BaseModel):
+    """Demande de telechargement d'un modele local.
+
+    Deux formes : ``model_id`` (id du catalogue cure), ou ``repo`` + ``filename``
+    pour un modele choisi sur Hugging Face (hors catalogue).
+    """
+    model_id: str = Field("", description="Id du modele dans le catalogue (ex. qwen3-8b)")
+    repo: Optional[str] = Field(None, description="Depot Hugging Face (ex. bartowski/Qwen3-4B-GGUF)")
+    filename: Optional[str] = Field(None, description="Fichier GGUF du depot")
+    size_bytes: Optional[int] = Field(None, description="Taille annoncee (jauge et espace disque)")
+
+
+class ModelDownloadJob(BaseModel):
+    """Constat public d'un job, partage par REST et SSE.
+
+    ``paused`` est un etat stable : le client peut consulter le job ou le
+    reprendre plus tard sans considerer le flux SSE comme termine.
+    """
+    job_id: str
+    model_id: str
+    status: str
+    received: int = 0
+    total: int = 0
+    pct: float = 0.0
+    speed_mbps: float = 0.0
+    error: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    staging_path: Optional[str] = None
+
+
+class ModelDownloadList(BaseModel):
+    """Liste des jobs de telechargement, exposee sous ``data.jobs``."""
+    jobs: List[ModelDownloadJob] = Field(default_factory=list)
+
+
+class EmbeddedStartRequest(BaseModel):
+    """Demande de demarrage du serveur d'inference local sur un modele telecharge."""
+    model_id: str = Field(..., description="Id du modele telecharge a charger")
 
 
 # ----------------------------- Playlists --------------------------------------

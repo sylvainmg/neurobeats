@@ -37,7 +37,7 @@ from services.embeddings import warm_reco_model
 from services.home import warm_home
 from services.network import net_probe
 from services.recommendation import _cold_start_warmup
-from services import covers, state
+from services import covers, llm, models as model_service, state
 
 _bootstrapped = False
 
@@ -61,6 +61,20 @@ async def lifespan(_app: FastAPI):
     """Initialise le moteur au demarrage et l'arrete proprement a l'extinction."""
     global _bootstrapped
     if not _bootstrapped:
+        # Les jobs de modèles sont durables : un worker disparu est mis en
+        # pause et ses fragments restent disponibles pour la reprise.
+        try:
+            model_service.reconcile_download_jobs()
+        except Exception as exc:
+            print(f"  [boot] registre des modèles illisible : {exc}", flush=True)
+        # Le choix IA a une seule forme persistée (`selection`) : on migre
+        # l'ancien format, puis on aligne le moteur sur le modèle choisi (le
+        # chargement se poursuit en fond, l'UI en affiche la progression).
+        try:
+            llm.migrate_ai_selection()
+            llm.align_engine()
+        except Exception as exc:
+            print(f"  [boot] choix IA indisponible : {exc}", flush=True)
         _migrate_json_to_db()
         _load_stream_cache()
         # Lecteur singleton : on etablit le daemon mpv immediatement au boot
@@ -88,13 +102,63 @@ async def lifespan(_app: FastAPI):
     port = os.environ.get("NEUROBEATS_PORT", "8000")
     print(f"[API] NeuroBeats backend prêt sur http://0.0.0.0:{port}", flush=True)
     yield
-    state.STREAMING_MODE = False
-    state.STREAMING_SKIP.set()
-    _stop_player()
-    _shutdown_daemon()
+    try:
+        state.STREAMING_MODE = False
+        state.STREAMING_SKIP.set()
+        _stop_player()
+    finally:
+        # Le serveur llama est un enfant du backend : le stopper ici couvre
+        # aussi les lancements hors Electron et libère sa mémoire.
+        try:
+            model_service.stop_embedded()
+        except Exception as exc:
+            print(f"  [shutdown] serveur local : {exc}", flush=True)
+        finally:
+            # Le groupe de processus Electron tue aussi les workers orphelins
+            # apres un SIGKILL ; ce chemin propre laisse leurs fragments et
+            # marque les jobs actifs comme paused avant la fermeture.
+            try:
+                model_service.shutdown_downloads()
+            except Exception as exc:
+                print(f"  [shutdown] workers de modèles : {exc}", flush=True)
+            finally:
+                _shutdown_daemon()
 
 
 app = FastAPI(title="NeuroBeats API", version="1.0", lifespan=lifespan)
+
+
+def _health_identity_fields() -> dict:
+    """Retourne les marqueurs d'instance attendus par le lanceur desktop."""
+    raw_port = os.environ.get("NEUROBEATS_PORT", "8000")
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError):
+        port = 0
+    return {
+        "service": "neurobeats-backend",
+        "instance_id": os.environ.get("NEUROBEATS_INSTANCE_ID", ""),
+        "profile": os.environ.get("NEUROBEATS_PROFILE", "web"),
+        "port": port,
+        "runtime_port": port,
+    }
+
+
+@app.get("/api/health", include_in_schema=False)
+async def health_with_instance_identity():
+    """Étiquette le backend sans supprimer les champs de santé existants.
+
+    La route est déclarée avant l'inclusion du router historique afin de
+    conserver son enveloppe et son comportement tout en ajoutant l'identité
+    d'instance attendue par le lanceur desktop.
+    """
+    payload = await health.health()
+    data = dict(payload.get("data") or {})
+    data.update(_health_identity_fields())
+    return {"status": payload.get("status", "ok"), "data": data,
+            "error": payload.get("error")}
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True,

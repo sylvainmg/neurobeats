@@ -148,7 +148,10 @@ def get_recommendation(query: str = "", force_genre_filter: bool = False,
     """
     history = hist_read(500)
     profile = profile_read()
-    if not history and not profile.get("preferences"):
+    # Premier lancement : aucun signal d'ecoute ni note. Un contexte explicite
+    # (genre, envie) suffit cependant a semer une selection ; sans contexte, il
+    # n'y a rien a classer et on le dit.
+    if not history and not profile.get("preferences") and not (query or "").strip():
         return json.dumps({"error": "Aucun historique. Ecoute d'abord de la musique via search_music + play_music."}, ensure_ascii=False)
     # Notes attribuees par l'utilisateur : elles pesent dans le classement (bonus
     # des artistes aimes, penalite des artistes peu notes) et excluent les titres

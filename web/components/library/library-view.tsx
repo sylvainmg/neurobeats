@@ -206,7 +206,7 @@ export function LibraryView() {
                       </button>
                     </form>
                   ) : (
-                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 max-md:opacity-100 pointer-coarse:opacity-100">
                       <button
                         type="button"
                         aria-label={`Renommer la playlist « ${playlist.name} »`}

@@ -327,6 +327,13 @@ def _shutdown_daemon():
             old.wait(timeout=1)
         except subprocess.TimeoutExpired:
             old.kill()
+    # mpv ne retire pas toujours son chemin IPC lorsqu'il reçoit SIGTERM ;
+    # supprimer ce fichier évite qu'une relance le interprète comme un socket actif.
+    try:
+        if os.path.exists(state._MPV_SOCK):
+            os.unlink(state._MPV_SOCK)
+    except OSError:
+        pass
 
 
 def _ipc_event_loop():

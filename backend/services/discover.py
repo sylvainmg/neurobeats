@@ -18,7 +18,7 @@ from collections import Counter
 from services import covers
 from services.db_access import hist_read, recent_genre
 from services.editorial import FALLBACK_INTRO, FALLBACK_TITLE, llm_copy
-from services.genres import GENERIC_CHANNELS, GENRE_LABELS, _JUNK_TITLE_RE
+from services.genres import COLD_START_GENRES, GENERIC_CHANNELS, GENRE_LABELS, _JUNK_TITLE_RE
 from services.recommendation import get_recommendation
 from services.state import _tprint
 
@@ -134,9 +134,20 @@ def _gather_mix(genre: str, want: int = 8) -> list:
 
 
 def _mix_section(want: int = 8) -> dict:
-    """Section « mix personnel » : selection + habillage LLM."""
+    """Section « mix personnel » : selection + habillage LLM.
+
+    Premier lancement (ni historique ni note) : le moteur de reco exige un
+    contexte, on lui donne un genre large pour que la section ait du contenu.
+    """
     genre = recent_genre()
     tracks = _gather_mix(genre, want)
+    if not tracks and not genre:
+        for seed in COLD_START_GENRES:
+            tracks = _gather_mix(seed, want)
+            if tracks:
+                genre = seed
+                _tprint(f"[discover] amorce premier lancement : {len(tracks)} titres ({seed})")
+                break
     if tracks:
         headline, intro = llm_copy(
             tracks, genre,
@@ -145,7 +156,7 @@ def _mix_section(want: int = 8) -> dict:
     else:
         headline, intro = FALLBACK_TITLE, FALLBACK_INTRO
     return {
-        "ready": bool(tracks),
+        "ready": True,
         "headline": headline,
         "intro": intro,
         "genre": genre,

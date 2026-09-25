@@ -270,9 +270,42 @@ export interface SearchSuggestion {
   query: string;
 }
 
+/** Le choix IA : un enregistrement unique (source de vérité du backend). */
+export interface AiSelection {
+  kind: "ollama" | "lmstudio" | "openai" | "anthropic" | "embedded";
+  /** Id du modèle local, présent uniquement quand `kind === "embedded"`. */
+  model?: string;
+}
+
+/** Modèle local téléchargé, proposé comme choix au même titre qu'un externe. */
+export interface AiLocalModel {
+  model_id: string;
+  name: string;
+  size_bytes: number;
+}
+
+/** État du moteur local : lisible pendant un chargement. */
+export interface AiEmbeddedStatus {
+  state: "idle" | "loading" | "ready" | "error";
+  /** Le modèle choisi est encore en téléchargement : rien à charger encore. */
+  waiting_for_download?: boolean;
+  model_id?: string;
+  pid?: number;
+  port?: number;
+  since?: string;
+  error?: string;
+}
+
 /** Réglages du modèle IA (GET/PUT /api/profile/ai). Cle API toujours masquée. */
 export interface AiSettings {
-  provider: "ollama" | "lmstudio" | "openai" | "anthropic";
+  /** Dérivé de `selection` par le backend : jamais une seconde source. */
+  provider: AiSelection["kind"];
+  /** Le choix, tel que persisté par le backend. */
+  selection: AiSelection;
+  /** Modèles locaux téléchargés, proposés comme choix. */
+  models: AiLocalModel[];
+  /** État du moteur local (progression du chargement). */
+  engine: AiEmbeddedStatus;
   configured: boolean;
   label: string;
   ollama: { host?: string; model?: string };
@@ -283,7 +316,9 @@ export interface AiSettings {
 
 /** Corps de la mise à jour : `api_key` absent (undefined) = conservée, "" = effacée. */
 export interface AiSettingsPatch {
-  provider?: AiSettings["provider"];
+  /** Le choix : l'enregistrer propage la sélection partout. */
+  selection?: AiSelection;
+  provider?: AiSelection["kind"];
   ollama?: Partial<AiSettings["ollama"]>;
   lmstudio?: Partial<AiSettings["lmstudio"]>;
   openai?: Partial<AiSettings["openai"]> & { api_key?: string };
@@ -488,6 +523,8 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  /** État du moteur local seul : poll léger pendant un chargement de modèle. */
+  getAiEmbedded: () => apiFetch<AiEmbeddedStatus>("/api/profile/ai/embedded"),
   /**
    * Vérifie que la config répond. Le corps optionnel porte les valeurs en cours
    * d'édition (formulaire non sauvé) : le backend les teste sans rien persister.
