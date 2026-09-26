@@ -21,6 +21,7 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Animated,
   BackHandler,
   FlatList,
   KeyboardAvoidingView,
@@ -56,7 +57,8 @@ import {
   IconSearch,
   IconTrash,
 } from "@/ui/icons";
-import { Bouton, EcranVide } from "@/ui/kit";
+import { Bouton, COURBE, EcranVide } from "@/ui/kit";
+import { FondClavier } from "@/ui/clavier";
 import { useDialogue } from "@/ui/dialog";
 import { FeuilleNouvellePlaylist } from "@/ui/feuille-playlist";
 import { MiniLecteur } from "@/ui/mini-player";
@@ -189,6 +191,85 @@ export default function PagePlaylist() {
           piste.chaine.toLowerCase().includes(recherchePropre),
       )
     : pistes;
+
+  /** On écrit ? Alors la pochette et ses boutons s'effacent. */
+  const repli = recherchePropre.length > 0;
+
+  /**
+   * Repli de la pochette et de ses boutons quand on écrit dans le filtre.
+   *
+   * La pochette occupe 220 px et les boutons quelques lignes de plus : ensemble
+   * ils repoussent les résultats sous le clavier, si bien que l'écran de
+   * recherche n'en montre aucun. On les efface donc pendant la saisie — mais par
+   * une animation, pas d'un coup : le bloc s'efface en s'élevant, et la HAUTEUR
+   * de l'en-tête se replie en même temps pour que les titres remontent le
+   * remplir. C'est ce double mouvement — le contenu qui s'en va par le haut, la
+   * liste qui monte dessous — qui rend la « montée » lisible au lieu d'un saut.
+   *
+   * Deux drivers, comme sur l'écran Bibliothèque : l'opacité et le glissement
+   * partent sur le fil natif, la hauteur touche à la mise en page et reste sur
+   * le fil JS. Si l'utilisateur coupe les animations, les deux valeurs se posent
+   * d'un coup, sans détour.
+   */
+  const anime = useApp((etat) => etat.animations);
+  const [repliJs] = useState(() => new Animated.Value(0));
+  const [repliNatif] = useState(() => new Animated.Value(0));
+  /** La hauteur naturelle de l'en-tête, remesurée à chaque layout pour la rejouer. */
+  const [hauteurEntete, setHauteurEntete] = useState(0);
+  useEffect(() => {
+    if (anime) {
+      Animated.parallel([
+        Animated.timing(repliNatif, {
+          toValue: repli ? 1 : 0,
+          // Le retour est plus lent que l'aller : la pochette doit avoir le
+          // temps de revenir poser la playlist à nouveau sous les yeux.
+          duration: repli ? 220 : 300,
+          easing: COURBE,
+          useNativeDriver: true,
+        }),
+        Animated.timing(repliJs, {
+          toValue: repli ? 1 : 0,
+          duration: repli ? 220 : 300,
+          easing: COURBE,
+          useNativeDriver: false,
+        }),
+      ]).start();
+    } else {
+      repliNatif.setValue(repli ? 1 : 0);
+      repliJs.setValue(repli ? 1 : 0);
+    }
+  }, [anime, repli, repliNatif, repliJs]);
+
+  /**
+   * Le relevé des rangs, figé à chaque fois que la saisie se pose.
+   *
+   * Une ligne ne se lève qu'une fois : lui donner l'index courant la ferait
+   * remonter à chaque frappe, puisque la liste se recompose sous les doigts.
+   * On photographie donc les rangs au moment où l'on arrête d'écrire (300 ms),
+   * et plus rien ne bouge jusqu'à la vague suivante. La clé est le videoId :
+   * stable d'un résultat à l'autre, contrairement à l'index.
+   *
+   * Une ligne absente du relevé ne se lève pas : c'est le cas de la playlist
+   * entière, qu'on ne fait pas danser à chaque retour d'écran.
+   */
+  const [releve, setReleve] = useState<Record<string, number> | null>(null);
+  useEffect(() => {
+    if (!repli) return;
+    // Seule la frappe relance le minuteur. `visibles` est reconstruit à chaque
+    // rendu — le mettre dans les dépendances remettrait le compte à zéro en
+    // boucle et le relevé ne se ferait jamais ; on relit donc la liste au
+    // moment où le délai expire, refermée par sa forme seule.
+    const courante = visibles;
+    const minuteur = setTimeout(() => {
+      setReleve(Object.fromEntries(courante.map((piste, rang) => [String(piste.id), rang])));
+    }, 300);
+    return () => clearTimeout(minuteur);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recherche, repli]);
+  // Hors recherche, aucun rang : la playlist entière ne se lève pas. La remise à
+  // zéro est une DÉDUCTION (rien n'est saisi), pas un effet à déclencher — l'écrire
+  // dans l'effet ci-dessus obligerait à un rendu en cascade à chaque effacement.
+  const rangs = repli ? releve : null;
 
   // Les titres qui téléchargent tournent leur icône (voir `LigneTitre`). Le
   // live vient de `suivis`, pas de la base : la base ne passe « chez toi »
@@ -422,6 +503,12 @@ export default function PagePlaylist() {
       style={styles.porte}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
+      {/* Le fond referme le clavier : un appui sur le vide de l'écran laisse les
+          résultats à l'air, et le clavier qui les recouvrait se retire. Il est
+          posé SOUS le contenu (premier enfant, remplissage absolu), donc les
+          lignes, les boutons et le champ gardent la main — seuls les appuis
+          sur le vide l'atteignent. */}
+      <FondClavier style={styles.porte}>
       <View style={[styles.entete, { paddingTop: insets.top + space.sm }]}>
         {enSelection ? (
           <>
@@ -538,6 +625,13 @@ export default function PagePlaylist() {
             enCours={enCours.has(item.video_id)}
             enSelection={enSelection}
             selectionne={selection.has(String(item.id))}
+            // Le rang vient d'un instantané figé au moment où la saisie s'est
+            // posée, jamais de l'index courant : celui-ci change à chaque
+            // frappe, et les lignes survivantes remonteraient sans cesse sous
+            // le doigt pendant qu'on écrit. Le relevé repart de zéro à chaque
+            // nouvelle vague, donc la position dans les résultats est toujours
+            // celle qu'on a vue.
+            entree={rangs?.[String(item.id)]}
           />
         )}
         contentContainerStyle={[
@@ -545,85 +639,127 @@ export default function PagePlaylist() {
           { paddingBottom: placeSansBarre(insets.bottom, mini) },
         ]}
         ListHeaderComponent={
+          // Le repli se joue sur deux vues imbriquées, pour un seul driver par
+          // vue : l'extérieure replie la HAUTEUR (fil JS, hauteurEntete → 0),
+          // l'intérieure fait disparaître le contenu (fil natif : fondu + petite
+          // montée). La hauteur est remesurée à chaque layout, jamais figée : le
+          // résumé chiffré arrive après les données et change la taille du bloc,
+          // et une hauteur verrouillée sur sa valeur d'avant laisserait un trou
+          // vide sous la pochette au retour du filtre.
+          <Animated.View
+            style={{
+              height:
+                hauteurEntete > 0
+                  ? repliJs.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [hauteurEntete, 0],
+                    })
+                  : undefined,
+              overflow: "hidden",
+            }}
+          >
+            <Animated.View
+              onLayout={(e) => {
+                // On ne mesure que le bloc déployé : une hauteur déjà en train
+                // de se replier ne doit pas devenir la nouvelle référence.
+                if (!repli) setHauteurEntete(e.nativeEvent.layout.height);
+              }}
+              style={{
+                opacity: repliNatif.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [1, 0],
+                }),
+                transform: [
+                  {
+                    translateY: repliNatif.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0, -14],
+                    }),
+                  },
+                ],
+              }}
+            >
           <View style={styles.enteteBloc}>
-            {/* L'œuvre est l'identité de la playlist : grande et centrée,
-                sans autre signe dessus — l'objet se suffit. L'état des
-                titres est dans chaque ligne, pas sur la vignette d'en-tête. */}
-            <View style={styles.pochette}>
-              <Vignette
-                // La même image que l'icône de la liste : la pochette de la
-                // playlist, sinon celle de son premier titre (« Sans
-                // playlist » n'a pas de playlist pour la lui donner).
-                pochette={couverture ?? pistes.find((piste) => piste.pochette)?.pochette ?? null}
-                titre={nom || "…"}
-                taille={220}
-                rayon={radius.lg}
-                tailleInitiale={40}
-              />
-            </View>
-
-            <Text style={[styles.titre, styles.centre]} numberOfLines={2}>
-              {nom || "…"}
-            </Text>
-            <Text style={[styles.resume, styles.centre]}>
-              {pistes.length > 0
-                ? resumeDePlaylist(pistes.length)
-                : "Playlist vide"}
-            </Text>
-
-            <View style={styles.actions}>
-              {possedees.length > 0 ? (
-                <>
-                  <Bouton
-                    titre="Tout lire"
-                    onPress={async () => {
-                      await jouer(fileDeLaPlaylist(), 0);
-                      router.push("/player");
-                    }}
-                    icone={<IconPlay size={18} color={colors.onPrimary} rempli />}
-                  />
-                  <Bouton
-                    titre="Aléatoire"
-                    onPress={async () => {
-                      await jouerAleatoirement(fileDeLaPlaylist(), 0);
-                      router.push("/player");
-                    }}
-                    icone={<IconAleatoire size={18} color={colors.onPrimary} />}
-                  />
-                </>
-              ) : null}
-              {/* Une playlist scannée se complète en rescanant son code ; une
-                  née sur le téléphone reprend ses téléchargements directs — le
-                  lien des titres manquants est déjà connu. */}
-              {locale === 0 && manquants > 0 ? (
-                <Bouton
-                  titre={`Récupérer ${pluraliser(manquants, "titre")}`}
-                  variante="fantome"
-                  onPress={() => router.push("/scan")}
-                  icone={<IconCodeQr size={18} color={colors.ink} />}
+              {/* L'œuvre est l'identité de la playlist : grande et centrée,
+                  sans autre signe dessus — l'objet se suffit. L'état des
+                  titres est dans chaque ligne, pas sur la vignette d'en-tête. */}
+              <View style={styles.pochette}>
+                <Vignette
+                  // La même image que l'icône de la liste : la pochette de la
+                  // playlist, sinon celle de son premier titre (« Sans
+                  // playlist » n'a pas de playlist pour la lui donner).
+                  pochette={couverture ?? pistes.find((piste) => piste.pochette)?.pochette ?? null}
+                  titre={nom || "…"}
+                  taille={220}
+                  rayon={radius.lg}
+                  tailleInitiale={40}
                 />
+              </View>
+
+              <Text style={[styles.titre, styles.centre]} numberOfLines={2}>
+                {nom || "…"}
+              </Text>
+              <Text style={[styles.resume, styles.centre]}>
+                {pistes.length > 0
+                  ? resumeDePlaylist(pistes.length)
+                  : "Playlist vide"}
+              </Text>
+
+              <View style={styles.actions}>
+                {possedees.length > 0 ? (
+                  <>
+                    <Bouton
+                      titre="Tout lire"
+                      onPress={async () => {
+                        await jouer(fileDeLaPlaylist(), 0);
+                        router.push("/player");
+                      }}
+                      icone={<IconPlay size={18} color={colors.onPrimary} rempli />}
+                    />
+                    <Bouton
+                      titre="Aléatoire"
+                      onPress={async () => {
+                        await jouerAleatoirement(fileDeLaPlaylist(), 0);
+                        router.push("/player");
+                      }}
+                      icone={<IconAleatoire size={18} color={colors.onPrimary} />}
+                    />
+                  </>
+                ) : null}
+                {/* Une playlist scannée se complète en rescanant son code ; une
+                    née sur le téléphone reprend ses téléchargements directs — le
+                    lien des titres manquants est déjà connu. */}
+                {locale === 0 && manquants > 0 ? (
+                  <Bouton
+                    titre={`Récupérer ${pluraliser(manquants, "titre")}`}
+                    variante="fantome"
+                    onPress={() => router.push("/scan")}
+                    icone={<IconCodeQr size={18} color={colors.ink} />}
+                  />
+                ) : null}
+                {locale === 1 && manquants > 0 ? (
+                  <Bouton
+                    titre="Reprendre le téléchargement"
+                    variante="fantome"
+                    onPress={() => void reprendreLesManquants()}
+                    icone={<IconCloudDown size={18} color={colors.ink} />}
+                  />
+                ) : null}
+              </View>
+
+              {locale === 0 && manquants > 0 ? (
+                <Text style={[styles.note, styles.centre]}>
+                  Scanne le code de cette playlist pour récupérer les titres manquants.
+                </Text>
               ) : null}
               {locale === 1 && manquants > 0 ? (
-                <Bouton
-                  titre="Reprendre le téléchargement"
-                  variante="fantome"
-                  onPress={() => void reprendreLesManquants()}
-                  icone={<IconCloudDown size={18} color={colors.ink} />}
-                />
+                <Text style={[styles.note, styles.centre]}>
+                  Reprends le téléchargement des titres manquants.
+                </Text>
               ) : null}
             </View>
-
-            {locale === 0 && manquants > 0 ? (
-              <Text style={[styles.note, styles.centre]}>
-                Scanne le code de cette playlist pour récupérer les titres manquants.
-              </Text>
-            ) : null}
-            {locale === 1 && manquants > 0 ? (
-              <Text style={[styles.note, styles.centre]}>
-                Reprends le téléchargement des titres manquants.
-              </Text>
-            ) : null}
-          </View>
+            </Animated.View>
+          </Animated.View>
         }
         ListEmptyComponent={
           recherchePropre ? (
@@ -695,6 +831,7 @@ export default function PagePlaylist() {
         }}
       />
       {dialogue}
+      </FondClavier>
     </KeyboardAvoidingView>
   );
 }

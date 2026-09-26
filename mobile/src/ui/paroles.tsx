@@ -10,8 +10,14 @@
  * Le défilement automatique s'arrête dès que l'utilisateur touche l'écran, et
  * ne repart qu'après un moment : sinon la feuille se rebouge toute seule sous
  * son pouce, ce qui est le pire moment pour lire des paroles.
+ *
+ * La ligne en cours est posée AU CENTRE de la zone visible — pas en haut, comme
+ * un simple suivi. C'est la position de lecture confortable (le regard n'a pas à
+ * descendre pour la ligne suivante, qui entre par en bas), et c'est ce que fait
+ * le karaoké du web. La réserve de bas de page vaut la moitié de la vue, pour que
+ * la dernière parole puisse elle aussi atteindre le centre.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { useLecture } from "@/playback/store";
@@ -22,6 +28,33 @@ import { colors, space, touch, type as typo } from "@/theme/tokens";
 
 /** Reprise du défilement auto après une interruption manuelle. */
 const REPRISE_MS = 3500;
+
+/**
+ * Le pas vertical d'une ligne, en points.
+ *
+ * Approximation, comme avant : une ligne tient sur une ou deux lignes de texte,
+ * plus son remplissage vertical. Elle sert à placer la ligne chantée, donc une
+ * erreur d'un point se voit à peine — et la MESURE réelle de la vue, elle, vient
+ * du `onLayout` plus bas.
+ */
+const PAS_LIGNE = 46;
+
+/**
+ * Marge de repli tant que la vue n'est pas mesurée.
+ *
+ * La feuille occupe une bonne moitié de l'écran : la moitié de cette hauteur est
+ * déjà une position crédible. Elle ne sert qu'au tout premier rendu, le temps que
+ * le `onLayout` livre la vraie valeur.
+ */
+const CENTRE_REPLI = 220;
+
+/**
+ * La place prise par l'en-tête AVANT la première ligne : titre du morceau,
+ * artiste, séparateur. Elle s'ajoute au cumul des hauteurs pour que la ligne 0
+ * soit bien à sa vraie position — sans elle, la première ligne se placerait trop
+ * haut de la hauteur de cet en-tête, et les suivantes suivraient ce décalage.
+ */
+const DECALAGE_ENTETE = 96;
 
 /** La ligne karaoké courante : la dernière qui a déjà commencé. */
 function ligneActive(
@@ -72,9 +105,27 @@ export function FeuilleParoles({ visible, onFermer }: { visible: boolean; onFerm
   const [chargement, setChargement] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
   const [manuel, setManuel] = useState(false);
+  /**
+   * La moitié de la hauteur visible : la réserve de bas de page.
+   *
+   * Elle est en state parce qu'elle entre dans le rendu (le padding du contenu),
+   * contrairement à la hauteur elle-même qui n'est lue qu'au moment du
+   * défilement. Une seule écriture par ouverture de feuille, donc aucun rendu en
+   * boucle.
+   */
+  const [reserveBasse, setReserveBasse] = useState(CENTRE_REPLI);
 
   const scrollRef = useRef<ScrollView>(null);
   const repriseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * La hauteur visible de la zone de défilement, mesurée en REF et non en state.
+   *
+   * Un ref suffit parce que le calcul du défilement le lit au moment où il
+   * s'exécute : le mettre en state re-rendrait le composant à chaque mesure, et
+   * une re-mesure pendant un glissement déstabiliserait le geste en cours
+   * (même raison que dans `EnTeteEcran`).
+   */
+  const hauteurVue = useRef(0);
 
   // Titre changé : on repart de zéro. Le reset se fait par CLÉ (comme le repo
   // le fait pour la feuille de playlist) plutôt que par un effet : un résultat
@@ -144,9 +195,86 @@ export function FeuilleParoles({ visible, onFermer }: { visible: boolean; onFerm
     [lignes, position],
   );
 
+  /**
+   * La hauteur RÉELLE de chaque ligne, et le compteur qui la fait réagir.
+   *
+   * `mesuresLigne` porte la hauteur mesurée de chaque ligne (remplissage et
+   * repli compris) ; `mesures` n'est qu'un compteur qui change quand une mesure
+   * arrive, pour que l'effet de défilement se ré-exécute une fois le texte posé.
+   * Sans lui, la première mesure arrive après le premier `scrollTo` : la ligne se
+   * placerait avec des hauteurs par défaut, puis plus jamais une fois mesurée.
+   */
+  /**
+   * Ce qui identifie le texte mesuré : le titre, puis le nombre de lignes et
+   * leur contenu. Une parole rechargée ou une ligne ajoutée change cette clé,
+   * donc les mesures, donc la position — le défilement se recalcule juste.
+   */
+  const cleMesures = `${videoId ?? ""}:${lignes.length}:${lignes[0]?.text ?? ""}`;
+  /**
+   * Les hauteurs mesurées, PAR TEXTE.
+   *
+   * Le tableau appartient au texte qu'il décrit : un nouveau titre en repart d'un
+   * vierge. D'où un état qui porte la clé — le reset est une DÉDUCTION (les
+   * mesures ne valent plus rien), écrite pendant le rendu, ce qui est autorisé
+   * pour un état (React le gelera pour le rendu en cours) et interdit pour un
+   * ref. Aucun effet, donc aucun rendu en cascade.
+   */
+  const [mesureTexte, setMesureTexte] = useState<{ cle: string; hauteurs: number[] }>({
+    cle: cleMesures,
+    hauteurs: [],
+  });
+  if (mesureTexte.cle !== cleMesures) {
+    setMesureTexte({ cle: cleMesures, hauteurs: [] });
+  }
+  // Mémoïsée pour garder une identité stable tant que le texte ne change pas :
+  // sans cela, les `useCallback` plus bas se recréeraient à chaque rendu, et
+  // l'effet de défilement se relancerait sans fin.
+  const hauteurs = useMemo(
+    () => (mesureTexte.cle === cleMesures ? mesureTexte.hauteurs : []),
+    [mesureTexte, cleMesures],
+  );
+  /**
+   * La position d'une ligne dans le contenu : la somme des hauteurs de celles qui
+   * la précèdent, plus le décalage de l'en-tête (titre, artiste, séparateur).
+   *
+   * Renvoie `null` tant qu'une seule hauteur manque — le tableau est creux le
+   * temps que le texte se pose, et une somme sur des zéros ferait défiler trop
+   * peu. On préfère ne pas scroller plutôt que scroller n'importe où : la ligne
+   * se placera dès que la mesure sera là.
+   */
+  const positionLigne = useCallback(
+    (index: number): number | null => {
+      let total = DECALAGE_ENTETE;
+      for (let i = 0; i < index; i += 1) {
+        const h = hauteurs[i];
+        if (h == null) return null;
+        total += h;
+      }
+      return total;
+    },
+    [hauteurs],
+  );
+  /** La hauteur mesurée d'une ligne, ou un pas prudent si elle n'est pas venue. */
+  const hauteurLigne = useCallback(
+    (index: number): number => hauteurs[index] ?? PAS_LIGNE,
+    [hauteurs],
+  );
+
   // Défilement auto : suivi de la ligne, sauf si l'utilisateur a le doigt
   // dessus. La reprise est différée — la feuille ne se rebouge pas dans la
   // seconde qui suit le geste.
+  //
+  // La ligne chantée est posée AU CENTRE de la zone visible, pas en haut : c'est
+  // là qu'on peut la lire longtemps sans que les yeux remontent, et c'est aussi
+  // ce que fait le karaoké du web.
+  //
+  // Sa position est MESURÉE, jamais estimée. La version précédente multipliait
+  // l'index par une hauteur de ligne fixe (46 pt) : les lignes qui se replient
+  // sur deux lignes font plus haut que ça, l'erreur s'accumule à chaque ligne,
+  // et le texte finit par scroller toujours trop loin — la ligne chantante
+  // remontait au-dessus du centre, puis hors de l'écran. On cumule donc les
+  // hauteurs réellement mesurées, ce qui reste juste même quand les paroles
+  // sont coupées arbitrairement.
   useEffect(() => {
     if (ligne < 0 || !visible) return;
     if (manuel) {
@@ -154,8 +282,16 @@ export function FeuilleParoles({ visible, onFermer }: { visible: boolean; onFerm
       repriseRef.current = setTimeout(() => setManuel(false), REPRISE_MS);
       return;
     }
-    scrollRef.current?.scrollTo({ y: Math.max(0, ligne * 46 - 140), animated: true });
-  }, [ligne, visible, manuel]);
+    const haut = positionLigne(ligne);
+    if (haut == null) return;
+    const centre = hauteurVue.current > 0 ? hauteurVue.current / 2 : CENTRE_REPLI;
+    // `y` est calculé sur la position de la ligne ; on retranche la moitié de
+    // sa PROPRE hauteur pour la poser entière au centre, pas son bord.
+    scrollRef.current?.scrollTo({
+      y: Math.max(0, haut + (hauteurLigne(ligne) / 2) - centre),
+      animated: true,
+    });
+  }, [ligne, visible, manuel, positionLigne, hauteurLigne]);
 
   useEffect(
     () => () => {
@@ -170,7 +306,13 @@ export function FeuilleParoles({ visible, onFermer }: { visible: boolean; onFerm
         ref={scrollRef}
         onScrollBeginDrag={() => setManuel(true)}
         scrollEventThrottle={32}
-        contentContainerStyle={styles.contenu}
+        contentContainerStyle={[styles.contenu, { paddingBottom: reserveBasse }]}
+        onLayout={(e) => {
+          // La hauteur visible, une fois pour toutes. C'est elle qui place la
+          // ligne chantée au centre ; sans elle, le texte resterait collé en haut.
+          hauteurVue.current = e.nativeEvent.layout.height;
+          setReserveBasse(Math.max(space.xl, hauteurVue.current / 2));
+        }}
       >
         {!piste ? (
           <Text style={styles.vide}>
@@ -190,6 +332,25 @@ export function FeuilleParoles({ visible, onFermer }: { visible: boolean; onFerm
                 <Text
                   key={`${i}-${parole.text.slice(0, 12)}`}
                   style={[styles.ligne, i === ligne && styles.ligneActive]}
+                  onLayout={(e) => {
+                    // La hauteur réelle de CETTE ligne, mesurée et non estimée.
+                    // C'est elle qui rend le centrage exact quand une parole se
+                    // replie sur deux lignes — le cas le plus courant, et celui
+                    // qui faisait déraper l'ancienne position calculée.
+                    const h = e.nativeEvent.layout.height;
+                    if (hauteurs[i] !== h) {
+                      // Un NOUVEAU tableau, jamais la même référence mutée :
+                      // React ne voit un changement d'état que par son identité.
+                      setMesureTexte((precedent) => {
+                        if (precedent.cle !== cleMesures || precedent.hauteurs[i] === h) {
+                          return precedent;
+                        }
+                        const copie = precedent.hauteurs.slice();
+                        copie[i] = h;
+                        return { cle: cleMesures, hauteurs: copie };
+                      });
+                    }
+                  }}
                   onPress={() => {
                     // Un appui sur une parole déplace la lecture : même contrat que
                     // sur le web, où le tap positionne.
@@ -264,11 +425,12 @@ async function seekToParole(parole: LigneParole, duree: number): Promise<void> {
 }
 
 const styles = StyleSheet.create({
-  contenu: { paddingBottom: space.xl, paddingTop: space.sm },
+  contenu: { paddingTop: space.sm },
   titre: { ...typo.ligne, color: colors.ink, fontWeight: "700" },
   chaine: { ...typo.caption, color: colors.ink2, marginTop: 2 },
-  // Une ligne fait ~46 pt de haut (2 lignes à 15 pt + interligne) : c'est le
-  // pas du défilement automatique, calculé dans les mêmes unités.
+  // Le remplissage vertical double la hauteur naturelle d'une ligne (19 pt de
+  // texte) : c'est ce qui porte le pas de 46 pt mesuré plus haut, et donc
+  // l'espacement que deux lignes chantées gardent entre elles.
   ligne: { ...typo.ligne, color: colors.ink3, paddingVertical: 7 },
   ligneActive: { color: colors.accent, fontWeight: "600" },
   note: { ...typo.caption, color: colors.ink3, marginTop: space.md, fontStyle: "italic" },

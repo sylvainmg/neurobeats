@@ -23,6 +23,13 @@ export type Piste = {
   fichier: string | null;
   pochette: string | null;
   etat: EtatTitre;
+  /**
+   * La place du titre dans sa playlist, telle que le manifeste l'a donnée.
+   *
+   * Écrit une fois, à l'import, jamais réécrit : c'est lui qui donne l'ordre
+   * affiché. `null` pour « Sans playlist », où l'ordre n'a pas de sens.
+   */
+  rang: number | null;
   ajoute_le: number;
   ecoute_le: number | null;
 };
@@ -123,7 +130,10 @@ export async function enregistrerPiste(
          -- à null, le téléphone garde le sien).
          fichier  = COALESCE(?, tracks.fichier),
          pochette = COALESCE(?, tracks.pochette),
-         etat     = CASE WHEN COALESCE(?, tracks.fichier) IS NULL THEN ? ELSE 'chez_toi' END
+         etat     = CASE WHEN COALESCE(?, tracks.fichier) IS NULL THEN ? ELSE 'chez_toi' END,
+         -- Le rang suit le manifeste, même en mise à jour : un rescan peut
+         -- donner un ordre différent, et c'est celui du manifeste qui fait foi.
+         rang     = COALESCE(?, tracks.rang)
        WHERE id = ?`,
       piste.titre,
       piste.chaine,
@@ -134,14 +144,15 @@ export async function enregistrerPiste(
       piste.pochette,
       piste.fichier,
       piste.etat ?? "absent",
+      piste.rang,
       existante.id,
     );
     return;
   }
   await handle.runAsync(
     `INSERT INTO tracks (video_id, playlist_id, titre, chaine, album, duree, taille,
-                         fichier, pochette, etat, ajoute_le)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                         fichier, pochette, etat, rang, ajoute_le)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     piste.video_id,
     piste.playlist_id,
     piste.titre,
@@ -152,6 +163,7 @@ export async function enregistrerPiste(
     piste.fichier,
     piste.pochette,
     piste.etat ?? "absent",
+    piste.rang,
     Date.now(),
   );
 }
@@ -331,14 +343,21 @@ export async function resumeSansPlaylist(): Promise<ResumePlaylist> {
 export async function listerPistesParPlaylist(playlist_id: string | null): Promise<Piste[]> {
   const handle = await db();
   if (playlist_id === null) {
+    // « Sans playlist » n'a pas d'ordre : le tiroir des titres sans dossier se lit
+    // par date d'écoute, du plus récemment écouté au plus ancien.
     return handle.getAllAsync<Piste>(
       `SELECT * FROM tracks WHERE playlist_id IS NULL
        ORDER BY etat = 'chez_toi' DESC, ecoute_le DESC NULLS LAST, titre COLLATE NOCASE`,
     );
   }
+  // L'ordre vient du RANG — la place donnée par le manifeste — et non de la
+  // date d'écoute. Écouter un titre ne le fait donc plus remonter en tête : la
+  // playlist garde l'ordre dans lequel tu l'as choisie, quoi qu'on écoute.
+  // `etat` d'abord reste utile : un titre absent reste lisible mais signalé,
+  // pas enterré sous les titres présents.
   return handle.getAllAsync<Piste>(
     `SELECT * FROM tracks WHERE playlist_id = ?
-     ORDER BY etat = 'chez_toi' DESC, ecoute_le DESC NULLS LAST, titre COLLATE NOCASE`,
+     ORDER BY rang IS NULL, rang, etat = 'chez_toi' DESC, titre COLLATE NOCASE`,
     playlist_id,
   );
 }
@@ -365,6 +384,17 @@ export async function pisteParId(video_id: string): Promise<Piste | null> {
   );
 }
 
+/**
+ * Note qu'un titre a été écouté, dans TOUTES les playlists qui le contiennent.
+ *
+ * C'est voulu : la même chanson peut figurer dans trois playlists, et l'utilisateur
+ * l'a écoutée une fois, pas trois. La date est une donnée d'écoute, pas une
+ * donnée de position.
+ *
+ * Ne surtout pas s'en servir pour ordonner une playlist — c'était le bug d'origine.
+ * L'ordre vient de `rang` (voir `listerPistesParPlaylist`) ; `ecoute_le` ne sert
+ * plus qu'à l'historique et au tiroir « Sans playlist ».
+ */
 export async function marquerEcoute(video_id: string) {
   const handle = await db();
   await handle.runAsync(`UPDATE tracks SET ecoute_le = ? WHERE video_id = ?`, Date.now(), video_id);

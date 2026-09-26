@@ -25,6 +25,7 @@ function piste(partiel: Partial<Piste> = {}): Piste {
     fichier: null,
     pochette: null,
     etat: "absent",
+    rang: null,
     ajoute_le: 0,
     ecoute_le: null,
     ...partiel,

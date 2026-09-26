@@ -49,6 +49,7 @@ import {
   IconTrash,
 } from "@/ui/icons";
 import { EcranVide, COURBE, EnTeteEcran, TitreSection } from "@/ui/kit";
+import { FondClavier } from "@/ui/clavier";
 import { useDialogue } from "@/ui/dialog";
 import { FeuilleNouvellePlaylist } from "@/ui/feuille-playlist";
 import { LignePlaylist } from "@/ui/playlist-row";
@@ -82,6 +83,42 @@ export default function Bibliotheque() {
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const enSelection = selection.size > 0;
   const enRecherche = recherche.trim().length > 0;
+
+  /**
+   * Le relevé des rangs, figé à chaque fois que la saisie se pose.
+   *
+   * Une ligne ne se lève qu'une fois : lui donner l'index courant la ferait
+   * remonter à chaque frappe, puisque les résultats se recomposent sous les
+   * doigts. On photographie donc les rangs quand l'on arrête d'écrire (300 ms),
+   * et plus rien ne bouge jusqu'à la vague suivante. La clé est composite
+   * playlist + videoId, comme la liste elle-même : un même titre peut vivre
+   * dans deux playlists, et chacune a son propre rang.
+   */
+  const [releve, setReleve] = useState<Record<string, number> | null>(null);
+  useEffect(() => {
+    if (!enRecherche) return;
+    // Seule la frappe relance le minuteur. `trouvees` est reconstruit à chaque
+    // rendu — le mettre dans les dépendances remettrait le compte à zéro en
+    // boucle et le relevé ne se ferait jamais ; on relit donc la liste au
+    // moment où le délai expire, refermée par sa forme seule.
+    const courante = trouvees;
+    const minuteur = setTimeout(() => {
+      setReleve(
+        Object.fromEntries(
+          courante.map((piste, rang) => [
+            `${piste.playlist_id ?? "sans"}-${piste.video_id}`,
+            rang,
+          ]),
+        ),
+      );
+    }, 300);
+    return () => clearTimeout(minuteur);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recherche, enRecherche]);
+  // Hors recherche, aucun rang : les playlists ne se lèvent pas, elles sont
+  // déjà en place. La remise à zéro est une DÉDUCTION, pas un effet — l'écrire
+  // dans l'effet ci-dessus provoquerait un rendu en cascade à chaque effacement.
+  const rangs = enRecherche ? releve : null;
 
   // L'entrée en sélection traverse l'écran d'un même geste : l'en-tête normal
   // cède la place à la barre de sélection, les coches se posent sur les lignes,
@@ -384,7 +421,12 @@ export default function Bibliotheque() {
   );
 
   return (
-    <View style={styles.porte}>
+    // Le fond referme le clavier : un appui sur le vide de l'écran laisse les
+    // résultats à l'air, et le clavier qui les recouvrait se retire. Il est
+    // posé SOUS le contenu (premier enfant, remplissage absolu), donc les
+    // lignes, les boutons et le champ gardent la main — seuls les appuis sur
+    // le vide l'atteignent.
+    <FondClavier style={styles.porte}>
       {/* L'en-tête normal cède la place à la barre de sélection : les deux
           sont superposées dans le même hôte, et l'avancée fait un fondu croisé
           (la barre glisse d'une minuscule hauteur — le geste qui « pose »
@@ -486,6 +528,7 @@ export default function Bibliotheque() {
                 .join(" · ")}
               onPress={() => void ecouter(item)}
               onLongPress={() => item.etat === "chez_toi" && retirer(item)}
+              entree={rangs?.[`${item.playlist_id ?? "sans"}-${item.video_id}`]}
             />
           )}
           contentContainerStyle={[styles.liste, { paddingBottom: placeEnBas(insets.bottom, mini) }]}
@@ -639,7 +682,7 @@ export default function Bibliotheque() {
         }}
       />
       {dialogue}
-    </View>
+    </FondClavier>
   );
 }
 

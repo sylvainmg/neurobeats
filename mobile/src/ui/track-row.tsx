@@ -7,14 +7,22 @@
  * ligne (icône de synchro verte si le titre est là, grise sinon) : plus de
  * colonne de poids, l'information est dans la ligne.
  */
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { Piste } from "@/db/repos";
 import { formaterDuree } from "@/transfer/format";
+import { useApp } from "@/state/app";
 import { MarqueEtat } from "@/ui/kit";
 import { IconCheck } from "@/ui/icons";
 import { Vignette } from "@/ui/vignette";
-import { colors, radius, space, tabular, type as typo } from "@/theme/tokens";
+import { colors, ease, radius, space, tabular, type as typo } from "@/theme/tokens";
+
+const COURBE = Easing.bezier(ease[0], ease[1], ease[2], ease[3]);
+/** Distance de la « montée » : assez pour se lire, pas assez pour flotter. */
+const MONTE = 10;
+/** Le décalage entre deux lignes : les titres se lèvent en vague, pas en bloc. */
+const DECALAGE = 26;
 
 /** Ce que la sous-ligne annonce : la durée, pour chaque titre. */
 function sousLigne(piste: Piste): string {
@@ -46,6 +54,7 @@ export function LigneTitre({
   enCours = false,
   enSelection = false,
   selectionne = false,
+  entree,
 }: {
   piste: Piste;
   onPress?: () => void;
@@ -56,8 +65,43 @@ export function LigneTitre({
   /** Mode sélection : la ligne coche, le tap bascule, la lecture attend. */
   enSelection?: boolean;
   selectionne?: boolean;
+  /**
+   * Rang d'arrivée de la ligne dans la liste. Également absent quand la ligne
+   * est stable (une lecture, une sélection) : c'est le rechargement d'un
+   * FILTRE qui fait monter les résultats, et une liste qui se réordonne en
+   * silence ne doit pas se mettre à danser sous le doigt.
+   */
+  entree?: number;
 }) {
-  return (
+  const anime = useApp((etat) => etat.animations);
+  const [levee] = useState(() => new Animated.Value(0));
+
+  // La ligne se lève à son arrivée : elle monte de MONTE et se pose, chacune à
+  // son tour, l'écart croissant avec son rang (DECALAGE) — une vague, pas un
+  // bloc qui bascule d'un coup. Le décalage est plafonné à huit rangs : au-delà,
+  // toutes les lignes restantes se lèvent ensemble, pour que le dernier
+  // résultat d'une longue recherche n'attende pas d'être lu.
+  const retard = Math.min(entree ?? 0, 8) * DECALAGE;
+  useEffect(() => {
+    if (entree === undefined) return;
+    levee.setValue(0);
+    if (!anime) {
+      // « Réduire le mouvement » : la ligne est déjà là, sans détour.
+      levee.setValue(1);
+      return;
+    }
+    const animation = Animated.timing(levee, {
+      toValue: 1,
+      duration: 200,
+      delay: retard,
+      easing: COURBE,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [anime, entree, retard, levee]);
+
+  const contenu = (
     <Pressable
       accessibilityRole={enSelection ? "checkbox" : "button"}
       accessibilityLabel={`${piste.titre}, ${piste.chaine}`}
@@ -107,6 +151,21 @@ export function LigneTitre({
         <MarqueEtat etat={piste.etat} compact enCours={enCours} />
       )}
     </Pressable>
+  );
+
+  if (entree === undefined) return contenu;
+
+  return (
+    <Animated.View
+      style={{
+        opacity: levee,
+        transform: [
+          { translateY: levee.interpolate({ inputRange: [0, 1], outputRange: [MONTE, 0] }) },
+        ],
+      }}
+    >
+      {contenu}
+    </Animated.View>
   );
 }
 

@@ -270,6 +270,11 @@ async function assurerTelecommande(piste: PisteLecture): Promise<void> {
     artworkUrl: piste.pochette ?? undefined,
   };
   try {
+    // La durée, d'abord. Le media item natif est bâti par `MediaItem.fromUri`,
+    // sans durée : la notification montrait alors une barre de position SANS
+    // curseur, et l'utilisateur ne savait pas où il en était ni où glisser.
+    // On la transmet donc explicitement — c'est le seul endroit où elle existe.
+    lecteur?.setPlayerDuration(piste.duree);
     if (telecommandeActivee) {
       // Simple changement de texte : ne touche pas à la session, donc sans
       // risque pour la lecture en cours.
@@ -284,6 +289,9 @@ async function assurerTelecommande(piste: PisteLecture): Promise<void> {
       showSkipNext: true,
     });
     telecommandeActivee = true;
+    // La durée est renvoyée après l'activation : la session vient de naître, et
+    // le wrapper qui la reçoit n'existe qu'à partir de là.
+    lecteur?.setPlayerDuration(piste.duree);
   } catch {
     // Le module ne propose pas les commandes, ou l'activation a échoué : on ne
     // prétend pas que la session est active, et on réessaiera au titre suivant.

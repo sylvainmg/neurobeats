@@ -10,7 +10,26 @@ import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 import { IconCheck, IconCloudDown, IconSync } from "@/ui/icons";
 import { Etiquette } from "@/ui/kit";
 import { Vignette } from "@/ui/vignette";
-import { colors, radius, space, tabular, type as typo } from "@/theme/tokens";
+import { colors, radius, space, tabular, touch, type as typo } from "@/theme/tokens";
+
+/**
+ * Marge verticale de la rangée, en points.
+ *
+ * Assez pour que la pochette ne touche pas la ligne voisine, assez peu pour que
+ * la rangée tienne dans la cible tactile sans devenir une suite de blocs.
+ */
+const MARGE = 5;
+
+/**
+ * Pochette d'une playlist : 56 pt, au-delà des 48 pt de la cible tactile.
+ *
+ * Le format « tactile » ne dit pas que la pochette doit être petite : il dit que
+ * la ZONE APPUYABLE doit faire 48dp. La pochette est le repère visuel de la
+ * rangée — c'est elle qu'on cherche du doigt, pas un nom dans du gris — donc elle
+ * occupe la hauteur utile en débordant franchement du minimum, et c'est la
+ * rangée qui s'agrandit avec elle (le `minHeight` ci-dessous ne borne plus rien).
+ */
+const TAILLE_POCHETTE = 56;
 
 export function LignePlaylist({
   nom,
@@ -59,7 +78,12 @@ export function LignePlaylist({
         pressed && styles.pressee,
       ]}
     >
-      <Vignette pochette={pochette} titre={nom} />
+      {/* La pochette remplit la hauteur utile de la rangée : 48 pt de cible
+          tactile moins les 5 pt de marge haute et basse. C'est le format
+          « tactile » — une cible d'appui confortable, pas une pochette de
+          couverture. Le défaut de `Vignette` (46) n'est pas repris tel quel,
+          il ferait déborder la rangée de ses marges. */}
+      <Vignette pochette={pochette} titre={nom} taille={TAILLE_POCHETTE} />
       <View style={styles.centre}>
         <Text style={styles.titre} numberOfLines={1} ellipsizeMode="tail">
           {nom}
@@ -111,9 +135,21 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: space.md,
-    paddingVertical: space.sm,
+    /**
+     * La marge suit la pochette : 56 + 2 × 5 = 66 pt de rangée. Elle déborde
+     * donc volontairement des 48 pt de la cible tactile — c'est la pochette qui
+     * commande, et le doigt n'a rien à perdre : la zone appuyable ne fait que
+     * grossir.
+     */
+    paddingVertical: MARGE,
     paddingHorizontal: 18,
-    minHeight: 62,
+    /**
+     * 48 pt reste le PLANCHER — la cible tactile Android (`.opencode/skills/
+     * ui-ux-pro-max`, « Touch Target Size » : 48dp sur Android, 44pt sur iOS,
+     * le même token `touch.min` que le reste de l'application). En pratique
+     * c'est la pochette (56 pt) qui l'emporte, et la rangée suit.
+     */
+    minHeight: touch.min,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },

@@ -41,6 +41,19 @@ CREATE TABLE IF NOT EXISTS tracks (
   fichier      TEXT,
   pochette     TEXT,
   etat         TEXT NOT NULL DEFAULT 'absent',
+  -- La place du titre DANS LA PLAYLIST, telle que le manifeste l'a donnée.
+  --
+  -- Sans elle, l'ordre affiché était recalculé à chaque lecture sur la colonne
+  -- ecoute_le, triée en ordre décroissant : une colonne que la lecture réécrit à
+  -- chaque titre joué. Écouter un titre le faisait remonter en tête de toutes les
+  -- playlists qui le contiennent — l'ordre bougeait parce qu on écoutait, ce qui
+  -- n a aucun sens.
+  --
+  -- Le rang est écrit UNE FOIS, à l import, et plus jamais. ecoute_le reste la
+  -- date d écoute, pour l historique, mais plus la clé de tri d une playlist.
+  -- NULL pour « Sans playlist », où l ordre n a pas de sens : le tiroir se lit
+  -- par-date, comme l historique.
+  rang         INTEGER,
   ajoute_le    INTEGER NOT NULL,
   ecoute_le    INTEGER,
   UNIQUE (video_id, playlist_id),
@@ -89,6 +102,7 @@ async function ouvrir(): Promise<SQLite.SQLiteDatabase> {
   await ajouterCouverture(base);
   await ajouterLocalite(base);
   await migrerTracksDoublons(base);
+  await migrerRangTracks(base);
   return base;
 }
 
@@ -137,6 +151,7 @@ async function migrerTracksDoublons(base: SQLite.SQLiteDatabase) {
       fichier      TEXT,
       pochette     TEXT,
       etat         TEXT NOT NULL DEFAULT 'absent',
+      rang         INTEGER,
       ajoute_le    INTEGER NOT NULL,
       ecoute_le    INTEGER,
       UNIQUE (video_id, playlist_id),
@@ -152,6 +167,28 @@ async function migrerTracksDoublons(base: SQLite.SQLiteDatabase) {
     CREATE INDEX IF NOT EXISTS idx_tracks_etat ON tracks (etat);
     CREATE INDEX IF NOT EXISTS idx_tracks_ecoute ON tracks (ecoute_le DESC);
   `);
+}
+
+/**
+ * Ajoute la colonne `rang` aux bases déjà installées.
+ *
+ * Les tables créées avant cette colonne n'ont pas de place pour le titre : leur
+ * ordre se déduisait de la date d'écoute, donc la lecture déplaçait la liste.
+ * On comble le trou en reprenant l'ordre d'insertion (`id`), qui est l'ordre
+ * d'arrivée du manifeste — le meilleur ordre de remplacement disponible, et
+ * surtout un ordre STABLE : plus rien ne le réécrira.
+ *
+ * Idempotent : la colonne existe déjà sur les bases neuves.
+ */
+async function migrerRangTracks(base: SQLite.SQLiteDatabase) {
+  const colonnes = await base.getAllAsync<{ name: string }>(`PRAGMA table_info(tracks)`);
+  if (colonnes.length === 0 || colonnes.some((colonne) => colonne.name === "rang")) return;
+  await base.execAsync(`ALTER TABLE tracks ADD COLUMN rang INTEGER`);
+  // `id` est l'ordre d'insertion : il rend le rang croissant comme l'id.
+  await base.execAsync(`UPDATE tracks SET rang = id WHERE rang IS NULL`);
+  await base.execAsync(
+    `CREATE INDEX IF NOT EXISTS idx_tracks_rang ON tracks (playlist_id, rang)`,
+  );
 }
 
 export async function closeForTests() {

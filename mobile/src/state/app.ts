@@ -384,9 +384,18 @@ async function pomperPreparation(code: Code, manifeste: Manifeste, nomLot: strin
   manifesteEnCours = manifeste;
   try {
     const reponse = await fetch(adresseSession(code));
-    if (!reponse.ok) return;
+    if (!reponse.ok) {
+      // Un bureau demarre mais trop lent, ou une reponse d'erreur ponctuelle :
+      // on reprogramme quand meme, sinon un simple echec reseau tuait la garde
+      // et abandonnait tous les titres restants sans aucun signe.
+      reclencherPoller(code, manifeste, nomLot, POLL_ECHECS_MS);
+      return;
+    }
     const analyse = analyserManifeste(await reponse.text(), code.base);
-    if (!analyse.ok) return;
+    if (!analyse.ok) {
+      reclencherPoller(code, manifeste, nomLot, POLL_ECHECS_MS);
+      return;
+    }
     for (const videoId of [...enAttente.keys()]) {
       const annonce = analyse.manifeste.pistes.find((piste) => piste.video_id === videoId);
       // Le bureau a abandonné ce titre ou n'en parle plus : on le dit aussi.
@@ -436,10 +445,12 @@ async function pomperPreparation(code: Code, manifeste: Manifeste, nomLot: strin
       return;
     }
     // Rien n'attend plus : on ralentit la garde au lieu de l'éteindre.
-    const cadence = enAttente.size > 0 ? POLL_PREPARATION_MS : POLL_ECHECS_MS;
-    reclencherPoller(code, manifeste, nomLot, cadence);
+    reclencherPoller(code, manifeste, nomLot, enAttente.size > 0 ? POLL_PREPARATION_MS : POLL_ECHECS_MS);
   } catch {
-    // Réseau capricieux : le prochain tour réessaiera.
+    // Réseau capricieux : le prochain tour réessaiera. Il faut vraiment le
+    // reprogrammer ici — sans quoi la garde s'éteint sur un simple packet perdu
+    // et tous les titres restants restent coincés « en préparation » pour de bon.
+    reclencherPoller(code, manifeste, nomLot, POLL_ECHECS_MS);
   }
 }
 
@@ -708,7 +719,11 @@ export const useApp = create<Etat>((set, get) => ({
         connus.set(ligne.video_id, { fichier: ligne.fichier, taille: ligne.taille });
       }
     }
-    for (const piste of manifeste.pistes) {
+    // L'index dans le manifeste EST l'ordre de la playlist : il est écrit une
+    // fois ici, et plus jamais relu ailleurs. C'est lui qui fige la position des
+    // titres — sans lui, l'ordre se déduisait de la date d'écoute et la
+    // lecture déplaçait la liste.
+    for (const [rang, piste] of manifeste.pistes.entries()) {
       const connu = connus.get(piste.video_id);
       await repo.enregistrerPiste({
         video_id: piste.video_id,
@@ -721,6 +736,7 @@ export const useApp = create<Etat>((set, get) => ({
         fichier: connu?.fichier ?? null,
         pochette: null,
         etat: connu ? "chez_toi" : "absent",
+        rang,
       });
     }
     // Les pochettes se rapatrient d'abord : un titre sans vignette une fois hors
@@ -868,6 +884,10 @@ export const useApp = create<Etat>((set, get) => ({
         fichier: null,
         pochette: null,
         etat: "absent",
+        // Un titre ajouté à la main APRÈS l'import n'a pas de place au
+        // manifeste : il passe donc en fin de playlist (rang nul = dernier dans
+        // l'ordre de tri), et non au milieu selon son id d'insertion.
+        rang: null,
       });
       await retenirPochette(videoId, pochette);
       // Un titre téléchargé directement (mini-navigateur) emporte aussi ses

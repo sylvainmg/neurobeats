@@ -1,7 +1,30 @@
+diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt
+index 992239b..bd00fb7 100644
+--- a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt
++++ b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt
+@@ -519,6 +519,17 @@ class AudioModule : Module() {
+         }
+       }
+ 
++      // La durée du titre, en secondes. Elle manque au media item (bâti par
++      // `MediaItem.fromUri`), et sans elle la notification montre une barre de
++      // position sans curseur. 0 ou absent = « inconnue », on s'en remet alors
++      // à ce que media3 lit dans le fichier.
++      Function("setPlayerDuration") { ref: AudioPlayer, seconds: Double ->
++        runOnMain {
++          val ms = if (seconds.isFinite() && seconds > 0) (seconds * 1000).toLong() else null
++          ref.setDureeJoueur(ms)
++        }
++      }
++
+       Function("clearLockScreenControls") { ref: AudioPlayer ->
+         runOnMain {
+           ref.clearLockScreenControls()
 diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt
---- a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt	2026-09-22 23:34:16.628512876 +0300
-+++ b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt	2026-09-22 23:34:16.630357330 +0300
-@@ -25,6 +25,7 @@
+index c76a9fd..229101f 100644
+--- a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt
++++ b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt
+@@ -25,6 +25,7 @@ import java.lang.ref.WeakReference
  private const val PLAYBACK_STATUS_UPDATE = "playbackStatusUpdate"
  private const val AUDIO_SAMPLE_UPDATE = "audioSampleUpdate"
  private const val SEEK_JUMP_INTERVAL_MS: Long = 10_000
@@ -9,7 +32,30 @@ diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/a
  
  @UnstableApi
  class AudioPlayer(
-@@ -224,6 +225,16 @@
+@@ -138,6 +139,22 @@ class AudioPlayer(
+     }
+   }
+ 
++  /**
++   * Communique au service la durée connue du titre, en millisecondes.
++   *
++   * Sans elle, la notification affiche une barre de position SANS curseur :
++   * Android ne le dessine que si la durée est finie, et le media item étant
++   * bâti par `MediaItem.fromUri`, media3 n'en a pas. Le lecteur JavaScript,
++   * lui, connaît la durée (elle est dans sa base) — c'est donc lui qui la
++   * transmet. Voir `MetadataInjectingPlayer.injecterDuree`.
++   */
++  fun setDureeJoueur(dureeMs: Long?) {
++    val serviceBinder = serviceConnection.playbackServiceBinder
++    if (serviceBinder != null && serviceConnection.bindingState == ServiceBindingState.BOUND) {
++      serviceBinder.service.setDureeJoueur(dureeMs)
++    }
++  }
++
+   fun clearLockScreenControls() {
+     if (isActiveForLockScreen) {
+       serviceConnection.playbackServiceBinder?.service?.unregisterPlayer()
+@@ -224,6 +241,16 @@ class AudioPlayer(
      mediaSession = buildBasicMediaSession(context, ref)
    }
  
@@ -27,9 +73,10 @@ diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/a
      val body = mapOf(
        "channels" to listOf(
 diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecords.kt b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecords.kt
---- a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecords.kt	2026-09-22 23:34:16.636489666 +0300
-+++ b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecords.kt	2026-09-22 23:34:16.638309266 +0300
-@@ -110,7 +110,9 @@
+index 86880d9..70b66ba 100644
+--- a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecords.kt
++++ b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecords.kt
+@@ -110,7 +110,9 @@ enum class AndroidAudioEncoder(val value: String) : Enumerable {
  class AudioLockScreenOptions(
    @Field val showSeekForward: Boolean,
    @Field val showSeekBackward: Boolean,
@@ -41,9 +88,10 @@ diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/a
  
  enum class InterruptionMode(val value: String) : Enumerable {
 diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt
---- a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt	2026-09-22 23:34:16.644835007 +0300
-+++ b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt	2026-09-22 23:34:16.646782484 +0300
-@@ -90,6 +90,12 @@
+index 196a5d5..cc1c8a0 100644
+--- a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt
++++ b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt
+@@ -90,6 +90,12 @@ class AudioControlsService : MediaSessionService() {
  
          ACTION_SEEK_FORWARD -> currentPlayerRef.seekTo(currentPlayerRef.currentPosition + SEEK_INTERVAL_MS)
          ACTION_SEEK_BACKWARD -> currentPlayerRef.seekTo(currentPlayerRef.currentPosition - SEEK_INTERVAL_MS)
@@ -56,7 +104,34 @@ diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/a
        }
      }
  
-@@ -192,12 +198,12 @@
+@@ -174,6 +180,26 @@ class AudioControlsService : MediaSessionService() {
+   private fun buildNotification(): Notification? {
+     val session = mediaSession ?: return null
+ 
++    // La rangée de boutons est (re)posée ICI, à chaque reconstruction, et nulle
++    // part ailleurs. C'est la correction du seekbar qui disparaît dès le 2ᵉ titre.
++    //
++    // Le symptôme : `updateMetadataInternal` (le chemin des titres N+1) ne
++    // rappelait PAS `updateSessionCustomLayout` — il se contente de mettre à jour
++    // la metadata et de reposter la notification. La session restant conservée,
++    // son custom layout pouvait rester celui du titre précédent, ou vide après un
++    // simple changement de source ; le `MediaStyle` publié perdait alors ses
++    // crans de seek, et Android effaçait la progress bar. Le premier titre
++    // passant, lui, par `setActivePlayerInternal` (qui appelle bien
++    // `updateSessionCustomLayout`), d'où un bug visible seulement après.
++    //
++    // En posant le layout juste avant de construire, il ne peut plus y avoir de
++    // notification publiée avec une rangée périmée : le point de publication et
++    // le point de mise à jour ne font plus qu'un. Les appels dispersés
++    // (`setActivePlayerInternal`, `setPlayerOptions`, `onIsPlayingChanged`)
++    // restent utiles — ils tiennent l'état à jour entre deux publications — mais
++    // plus aucun n'est nécessaire à la correction.
++    updateSessionCustomLayout(session.player.isPlaying)
++
+     val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+       .setSmallIcon(androidx.media3.session.R.drawable.media3_icon_circular_play)
+       // If the title is null or empty string android sets the notification to "<AppName> is running..." we want to keep the notification empty so we \u200E to keep the text empty.
+@@ -192,12 +218,12 @@ class AudioControlsService : MediaSessionService() {
        val compactViewIndices = mutableListOf<Int>()
        var currentIndex = 0
  
@@ -73,7 +148,7 @@ diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/a
            )
          )
          compactViewIndices.add(currentIndex)
-@@ -218,6 +224,29 @@
+@@ -218,6 +244,29 @@ class AudioControlsService : MediaSessionService() {
        compactViewIndices.add(currentIndex)
        currentIndex++
  
@@ -103,7 +178,7 @@ diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/a
        if (currentOptions?.showSeekForward == true) {
          builder.addAction(
            NotificationCompat.Action(
-@@ -226,7 +255,6 @@
+@@ -226,7 +275,6 @@ class AudioControlsService : MediaSessionService() {
              buildActionPendingIntent(ACTION_SEEK_FORWARD)
            )
          )
@@ -111,45 +186,45 @@ diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/a
        }
  
        style.setShowActionsInCompactView(*compactViewIndices.toIntArray())
-@@ -240,6 +268,18 @@
+@@ -240,13 +288,13 @@ class AudioControlsService : MediaSessionService() {
      val session = mediaSession ?: return
      val mediaButtons = mutableListOf<CommandButton>()
  
+-    // Add seek backward button if enabled
+-    if (currentOptions?.showSeekBackward == true) {
 +    // Add skip-to-previous button if enabled
 +    if (currentOptions?.showSkipPrevious == true) {
-+      mediaButtons.add(
+       mediaButtons.add(
+-        CommandButton.Builder(CommandButton.ICON_SKIP_BACK_10)
+-          .setDisplayName("Seek Backward")
 +        CommandButton.Builder(CommandButton.ICON_PREVIOUS)
 +          .setDisplayName("Previous")
-+          .setEnabled(true)
+           .setEnabled(true)
+-          .setSessionCommand(SessionCommand(ACTION_SEEK_BACKWARD, Bundle.EMPTY))
 +          .setSessionCommand(SessionCommand(ACTION_NAV_PREVIOUS, Bundle.EMPTY))
-+          .setSlots(CommandButton.SLOT_BACK)
-+          .build()
-+      )
-+    }
-+
-     // Add seek backward button if enabled
-     if (currentOptions?.showSeekBackward == true) {
-       mediaButtons.add(
-@@ -274,6 +314,18 @@
+           .setSlots(CommandButton.SLOT_BACK)
+           .build()
        )
-     }
+@@ -262,13 +310,13 @@ class AudioControlsService : MediaSessionService() {
+         .build()
+     )
  
+-    // Add seek forward button if enabled
+-    if (currentOptions?.showSeekForward == true) {
 +    // Add skip-to-next button if enabled
 +    if (currentOptions?.showSkipNext == true) {
-+      mediaButtons.add(
+       mediaButtons.add(
+-        CommandButton.Builder(CommandButton.ICON_SKIP_FORWARD_10)
+-          .setDisplayName("Seek Forward")
 +        CommandButton.Builder(CommandButton.ICON_NEXT)
 +          .setDisplayName("Next")
-+          .setEnabled(true)
+           .setEnabled(true)
+-          .setSessionCommand(SessionCommand(ACTION_SEEK_FORWARD, Bundle.EMPTY))
 +          .setSessionCommand(SessionCommand(ACTION_NAV_NEXT, Bundle.EMPTY))
-+          .setSlots(CommandButton.SLOT_FORWARD)
-+          .build()
-+      )
-+    }
-+
-     session.setCustomLayout(mediaButtons)
-     session.setMediaButtonPreferences(mediaButtons)
-   }
-@@ -371,7 +423,11 @@
+           .setSlots(CommandButton.SLOT_FORWARD)
+           .build()
+       )
+@@ -371,7 +419,11 @@ class AudioControlsService : MediaSessionService() {
            updateMetadata(metadata)
          }
          val session = MediaSession.Builder(context, sessionPlayer)
@@ -162,7 +237,26 @@ diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/a
            .build()
  
          // Replace the basic media session with a session connected to our playback service.
-@@ -452,7 +508,11 @@
+@@ -435,6 +487,18 @@ class AudioControlsService : MediaSessionService() {
+     updateMetadataInternal(player, metadata)
+   }
+ 
++  /**
++   * Note la durée connue du titre, pour que la notification dessine un curseur.
++   *
++   * Le curseur de la barre de position n'apparaît que si la durée est connue ;
++   * le media item étant bâti sans elle (voir `MetadataInjectingPlayer`), c'est
++   * ici qu'on la rattrape. Le lecteur JavaScript l'a dans sa base, il la
++   * transmet à chaque titre.
++   */
++  fun setDureeJoueur(dureeMs: Long?) {
++    sessionMetadataPlayer?.injecterDuree(dureeMs)
++  }
++
+   fun setPlayerOptions(
+     player: AudioPlayer,
+     metadata: Metadata?,
+@@ -452,7 +516,11 @@ class AudioControlsService : MediaSessionService() {
            updateMetadata(metadata)
          }
          val session = MediaSession.Builder(context, sessionPlayer)
@@ -175,7 +269,7 @@ diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/a
            .build()
  
          player.mediaSession.release()
-@@ -559,6 +619,12 @@
+@@ -559,6 +627,12 @@ class AudioControlsService : MediaSessionService() {
      const val ACTION_SEEK_FORWARD = "expo.modules.audio.action.SEEK_FORWARD"
      const val ACTION_SEEK_BACKWARD = "expo.modules.audio.action.SEEK_BACKWARD"
  
@@ -189,9 +283,10 @@ diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/a
    }
  }
 diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt
---- a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt	2026-09-22 23:34:16.653274011 +0300
-+++ b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt	2026-09-22 23:34:16.655094655 +0300
-@@ -10,7 +10,9 @@
+index 839aaef..2aa88bb 100644
+--- a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt
++++ b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt
+@@ -10,7 +10,9 @@ import androidx.media3.common.util.UnstableApi
  import com.google.common.util.concurrent.ListenableFuture
  
  @OptIn(UnstableApi::class)
@@ -202,7 +297,7 @@ diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/a
    override fun onConnect(
      session: MediaSession,
      controller: MediaSession.ControllerInfo
-@@ -35,6 +37,8 @@
+@@ -35,6 +37,8 @@ class AudioMediaSessionCallback : MediaSession.Callback {
            MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
              .add(SessionCommand(AudioControlsService.ACTION_SEEK_BACKWARD, Bundle.EMPTY))
              .add(SessionCommand(AudioControlsService.ACTION_SEEK_FORWARD, Bundle.EMPTY))
@@ -211,7 +306,7 @@ diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/a
              .build()
          )
          .build()
-@@ -56,6 +60,8 @@
+@@ -56,6 +60,8 @@ class AudioMediaSessionCallback : MediaSession.Callback {
        AudioControlsService.ACTION_SEEK_BACKWARD -> {
          session.player.seekTo(session.player.currentPosition - AudioControlsService.SEEK_INTERVAL_MS)
        }
@@ -220,10 +315,73 @@ diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/a
      }
      return super.onCustomCommand(session, controller, command, args)
    }
+diff --git a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt
+index 18203a3..73f9cb2 100644
+--- a/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt
++++ b/mobile/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt
+@@ -48,6 +48,38 @@ internal class MetadataInjectingPlayer(
+       .build()
+   }
+ 
++  /**
++   * La durée connue du titre, en millisecondes, injectée par le lecteur.
++   *
++   * Android ne dessine le curseur de la barre de position que si la durée est
++   * FINIE. Or le media item est bâti par `MediaItem.fromUri(uri)` : media3 n'a
++   * alors rien à quoi se fier, `C.TIME_UNSET` est remonté, et la notification
++   * affichait une barre vide — la position avance, mais rien n'indique où on en
++   * est et la barre n'est pas glissante.
++   *
++   * La durée, elle, est bien connue : elle est dans la base du téléphone. Elle
++   * n'était simplement pas transmise — l'API d'expo-audio n'offre aucun champ
++   * pour cela (`AudioSource` n'a que `uri`/`headers`/`name`, et
++   * `AudioPlayer.duration` est en lecture seule). Ce wrapper est le seul point
++   * que la session consulte pour la durée, on y répond donc à sa place.
++   *
++   * On ne remplace que la durée INCONNUE : si media3 a su la lire dans le
++   * fichier, sa valeur reste plus juste que la nôtre.
++   */
++  override fun getDuration(): Long {
++    val injectee = dureeInjectee
++    if (injectee != null && injectee > 0) return injectee
++    return super.getDuration()
++  }
++
++  /** Note la durée connue du titre (ms), venue de la base du téléphone. */
++  fun injecterDuree(ms: Long?) {
++    if (dureeInjectee == ms) return
++    dureeInjectee = ms
++  }
++
++  private var dureeInjectee: Long? = null
++
+   fun updateMetadata(metadata: Metadata?) {
+     if (Looper.myLooper() != applicationLooper) {
+       handler.post { updateMetadata(metadata) }
+@@ -89,5 +121,18 @@ internal class MetadataInjectingPlayer(
+     override fun onEvents(player: Player, events: Player.Events) {
+       listener.onEvents(this@MetadataInjectingPlayer, events)
+     }
++
++    // --- NEUROBEATS -------------------------------------------------------
++    // Android supprime la notification d'un service de lecture qu'il juge
++    // inerte, et il juge sur l'absence d'evenements. Ce wrapper n'en
++    // synthetisait aucun : il ne reliait QUE les changements de metadonnees.
++    // Consequence sur un titre en pause (et lui seul) : plus rien ne se
++    // passe, la notification disparait au bout de quelques minutes, et la
++    // progress bar reste figee au retour dans l'application.
++    //
++    // On relaie donc l'etat de lecture, qui porte la vie de la session.
++    override fun onIsPlayingChanged(isPlaying: Boolean) {
++      listener.onIsPlayingChanged(isPlaying)
++    }
+   }
+ }
 diff --git a/mobile/node_modules/expo-audio/build/AudioConstants.d.ts b/mobile/node_modules/expo-audio/build/AudioConstants.d.ts
---- a/mobile/node_modules/expo-audio/build/AudioConstants.d.ts	2026-09-22 23:34:16.678302800 +0300
-+++ b/mobile/node_modules/expo-audio/build/AudioConstants.d.ts	2026-09-22 23:34:16.680061662 +0300
-@@ -15,5 +15,15 @@
+index cfd92ad..53a7124 100644
+--- a/mobile/node_modules/expo-audio/build/AudioConstants.d.ts
++++ b/mobile/node_modules/expo-audio/build/AudioConstants.d.ts
+@@ -15,5 +15,15 @@ export type AudioLockScreenOptions = {
       * and scrub bar, and disable seek controls.
       */
      isLiveStream?: boolean;
@@ -239,11 +397,26 @@ diff --git a/mobile/node_modules/expo-audio/build/AudioConstants.d.ts b/mobile/n
 +    showSkipNext?: boolean;
  };
  //# sourceMappingURL=AudioConstants.d.ts.map
-\ Pas de fin de ligne à la fin du fichier
+\ No newline at end of file
 diff --git a/mobile/node_modules/expo-audio/build/AudioModule.types.d.ts b/mobile/node_modules/expo-audio/build/AudioModule.types.d.ts
---- a/mobile/node_modules/expo-audio/build/AudioModule.types.d.ts	2026-09-22 23:34:16.686327373 +0300
-+++ b/mobile/node_modules/expo-audio/build/AudioModule.types.d.ts	2026-09-22 23:34:16.688131049 +0300
-@@ -222,6 +222,10 @@
+index f3ae4ee..e9d4e8e 100644
+--- a/mobile/node_modules/expo-audio/build/AudioModule.types.d.ts
++++ b/mobile/node_modules/expo-audio/build/AudioModule.types.d.ts
+@@ -183,6 +183,13 @@ export declare class AudioPlayer extends SharedObject<AudioEvents> {
+      * This will clear the lock screen's now playing info.
+      */
+     clearLockScreenControls(): void;
++    /**
++     * Communicates the track duration, which the media item built from a bare URI
++     * does not carry. Without it the notification's position bar shows no cursor.
++     * @param seconds Duration in seconds; 0 (or any non-positive value) means
++     * "unknown", and the player then falls back to what it reads from the file.
++     */
++    setPlayerDuration(seconds: number): void;
+     /**
+      * Remove the player from memory to free up resources.
+      */
+@@ -222,6 +229,10 @@ export type AudioEvents = {
      playbackStatusUpdate(status: AudioStatus): void;
      /** Fired when audio sampling is enabled and new sample data is available. */
      audioSampleUpdate(data: AudioSample): void;
@@ -255,9 +428,10 @@ diff --git a/mobile/node_modules/expo-audio/build/AudioModule.types.d.ts b/mobil
  export declare class AudioRecorder extends SharedObject<RecordingEvents> {
      /**
 diff --git a/mobile/node_modules/expo-audio/src/AudioConstants.ts b/mobile/node_modules/expo-audio/src/AudioConstants.ts
---- a/mobile/node_modules/expo-audio/src/AudioConstants.ts	2026-09-22 23:34:16.661703602 +0300
-+++ b/mobile/node_modules/expo-audio/src/AudioConstants.ts	2026-09-22 23:34:16.663572684 +0300
-@@ -16,4 +16,14 @@
+index dcc0452..79092f9 100644
+--- a/mobile/node_modules/expo-audio/src/AudioConstants.ts
++++ b/mobile/node_modules/expo-audio/src/AudioConstants.ts
+@@ -16,4 +16,14 @@ export type AudioLockScreenOptions = {
     * and scrub bar, and disable seek controls.
     */
    isLiveStream?: boolean;
@@ -273,9 +447,24 @@ diff --git a/mobile/node_modules/expo-audio/src/AudioConstants.ts b/mobile/node_
 +  showSkipNext?: boolean;
  };
 diff --git a/mobile/node_modules/expo-audio/src/AudioModule.types.ts b/mobile/node_modules/expo-audio/src/AudioModule.types.ts
---- a/mobile/node_modules/expo-audio/src/AudioModule.types.ts	2026-09-22 23:34:16.670005123 +0300
-+++ b/mobile/node_modules/expo-audio/src/AudioModule.types.ts	2026-09-22 23:34:16.671866674 +0300
-@@ -280,6 +280,8 @@
+index 7e75371..712a925 100644
+--- a/mobile/node_modules/expo-audio/src/AudioModule.types.ts
++++ b/mobile/node_modules/expo-audio/src/AudioModule.types.ts
+@@ -237,6 +237,13 @@ export declare class AudioPlayer extends SharedObject<AudioEvents> {
+    * This will clear the lock screen's now playing info.
+    */
+   clearLockScreenControls(): void;
++  /**
++   * Communicates the track duration, which the media item built from a bare URI
++   * does not carry. Without it the notification's position bar shows no cursor.
++   * @param seconds Duration in seconds; 0 (or any non-positive value) means
++   * "unknown", and the player then falls back to what it reads from the file.
++   */
++  setPlayerDuration(seconds: number): void;
+ 
+   /**
+    * Remove the player from memory to free up resources.
+@@ -280,6 +287,8 @@ export type AudioEvents = {
    playbackStatusUpdate(status: AudioStatus): void;
    /** Fired when audio sampling is enabled and new sample data is available. */
    audioSampleUpdate(data: AudioSample): void;
