@@ -91,5 +91,35 @@ if [ -d "$DIST/node_modules" ]; then
   mv "$DIST/node_modules" "$DIST/web-node-modules"
 fi
 
+# Next grave dans ses metadonnees de build les chemins absolus de la machine
+# (`outputFileTracingRoot`, `repoRoot`, `appDir`, `turbopack.root`). Ils ne sont
+# jamais lus a l'execution, mais ils partent dans l'artefact public avec le nom
+# d'utilisateur et l'arborescence du poste de dev. On les remplace par un
+# chemin neutre : neutre car l'app sert ses fichiers via NODE_PATH, pas via ces
+# champs, qui ne servent qu'au tracing de build.
+say "→ Neutralisation des chemins de build dans le runtime standalone"
+python3 - "$DIST" "$DESKTOP" <<'PY'
+import os, sys
+
+dist, desktop = sys.argv[1], sys.argv[2]
+neutral = "/app"
+targets = [
+    os.path.join(dist, "server.js"),
+    os.path.join(dist, ".next", "required-server-files.json"),
+]
+replaced = 0
+for path in targets:
+    if not os.path.isfile(path):
+        continue
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    if desktop not in text:
+        continue
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text.replace(desktop, neutral))
+    replaced += 1
+print(f"  {replaced} fichier(s) neutralise(s)")
+PY
+
 say "✓ Standalone prêt : $DIST"
 say "  Lancer : npm run build && NEUROBEATS_STANDALONE_DIR=\"$DIST\" npm run start"

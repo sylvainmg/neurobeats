@@ -214,61 +214,57 @@ export function AddToPlaylistDialog({
                 const busy = busyId === playlist.id;
                 return (
                   <li key={playlist.id}>
-                    <div
+                    {/* Une seule cible cliquable pour toute la ligne : le libellé
+                        et l'icône font partie du bouton, sinon le clic tombe sur
+                        un <span> inerte à côté du bouton. */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void (present
+                          ? removeFrom(playlist.id, playlist.name)
+                          : addTo(playlist.id, playlist.name))
+                      }
+                      disabled={busyId !== null}
+                      aria-label={
+                        present
+                          ? `Retirer « ${track?.title ?? "ce titre"} » de la playlist ${playlist.name}`
+                          : `Ajouter « ${track?.title ?? "ce titre"} » à la playlist ${playlist.name}`
+                      }
+                      aria-busy={busy}
                       className={cn(
-                        "flex w-full items-center gap-3 rounded-lg p-2 transition-colors",
-                        present && "bg-surface-hover/40",
+                        "flex w-full cursor-pointer items-center gap-3 rounded-lg p-2 text-left transition-colors hover:bg-surface-hover",
+                        present && "bg-surface-hover/40 hover:bg-surface-hover/60",
+                        busyId !== null && "cursor-wait",
                       )}
                     >
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void (present
-                            ? removeFrom(playlist.id, playlist.name)
-                            : addTo(playlist.id, playlist.name))
-                        }
-                        disabled={busyId !== null}
-                        aria-label={
-                          present
-                            ? `Retirer « ${track?.title ?? "ce titre"} » de la playlist ${playlist.name}`
-                            : `Ajouter « ${track?.title ?? "ce titre"} » à la playlist ${playlist.name}`
-                        }
-                        className={cn(
-                          "flex min-w-0 flex-1 items-center gap-3 text-left",
-                          !present && "hover:bg-surface-hover cursor-pointer rounded-md",
-                          present && "cursor-pointer",
+                      <span className="relative block size-10 shrink-0 overflow-hidden rounded-md">
+                        {playlist.cover ? (
+                          <TrackCover
+                            videoId={playlist.cover}
+                            title={playlist.name}
+                            sizes={coverSizes(40)}
+                            className="size-10"
+                          />
+                        ) : (
+                          <span className="bg-surface-hover block size-10" />
                         )}
-                      >
-                        <span className="relative block size-10 shrink-0 overflow-hidden rounded-md">
-                          {playlist.cover ? (
-                            <TrackCover
-                              videoId={playlist.cover}
-                              title={playlist.name}
-                              sizes={coverSizes(40)}
-                              className="size-10"
-                            />
-                          ) : (
-                            <span className="bg-surface-hover block size-10" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className={cn(
+                            "block truncate text-sm font-medium",
+                            present ? "text-muted-foreground" : "text-foreground",
                           )}
+                        >
+                          {playlist.name}
                         </span>
-                        <span className="min-w-0 flex-1">
-                          <span
-                            className={cn(
-                              "block truncate text-sm font-medium",
-                              present ? "text-muted-foreground" : "text-foreground",
-                            )}
-                          >
-                            {playlist.name}
-                          </span>
-                          <span className="text-muted-foreground block truncate text-xs">
-                            {present
-                              ? "Déjà dans cette playlist"
-                              : `${playlist.count} titre${playlist.count > 1 ? "s" : ""}`}
-                          </span>
+                        <span className="text-muted-foreground block truncate text-xs">
+                          {present
+                            ? "Déjà dans cette playlist"
+                            : `${playlist.count} titre${playlist.count > 1 ? "s" : ""}`}
                         </span>
-                      </button>
-
-                      <span className="flex shrink-0 items-center gap-1 pr-1">
+                      </span>
+                      <span className="flex shrink-0 items-center gap-1">
                         {busy ? (
                           <Loader2 className="text-muted-foreground size-4 animate-spin" />
                         ) : present ? (
@@ -283,7 +279,7 @@ export function AddToPlaylistDialog({
                           </>
                         )}
                       </span>
-                    </div>
+                    </button>
                   </li>
                 );
               })}
