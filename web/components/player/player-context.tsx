@@ -29,6 +29,7 @@ interface PlayerContextValue {
   jump: (index: number) => Promise<void>;
   togglePause: () => Promise<void>;
   seek: (position: number) => Promise<void>;
+  seekBy: (delta: number) => Promise<void>;
   setVolume: (volume: number) => Promise<void>;
   setShuffle: (shuffle: boolean) => Promise<void>;
   setRepeat: (mode: RepeatMode) => Promise<void>;
@@ -41,6 +42,9 @@ const PlayerContext = createContext<PlayerContextValue | null>(null);
 const NON_TEXT_INPUTS = new Set([
   "button", "checkbox", "radio", "range", "file", "submit", "reset", "color",
 ]);
+
+/** Saut des flèches gauche/droite, comme sur les lecteurs web (YouTube, Spotify). */
+const SEEK_STEP_SECONDS = 5;
 
 /**
  * True si la frappe a lieu dans un champ de saisie.
@@ -59,6 +63,21 @@ function isTextEntry(target: EventTarget | null): boolean {
     return !NON_TEXT_INPUTS.has((el as HTMLInputElement).type);
   }
   return false;
+}
+
+/**
+ * True si la frappe a lieu sur un curseur (progression, volume).
+ *
+ * `isTextEntry` ne suffit pas : `range` est dans `NON_TEXT_INPUTS`, donc un
+ * curseur en renvoie `false`. Or Radix Slider capte déjà les flèches et fait
+ * son pas (1 s) de son côté — sans cette garde, une flèche déclencherait le
+ * pas du slider ET le saut global, soit deux seeks pour une frappe. Sur un
+ * curseur focalisé, les flèches lui appartiennent.
+ */
+function isRangeControl(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || !el.closest) return false;
+  return Boolean(el.closest('[role="slider"], input[type="range"]'));
 }
 
 /** Fournit l'état de lecture global (titre courant, position) et les actions. */
@@ -190,6 +209,22 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     (position: number) => run(() => api.seek(position)),
     [run],
   );
+  // Saut relatif (raccourcis clavier). `seek` est en position ABSOLUE et ne
+  // borne rien : le serveur rejette un `position` négatif en 422
+  // (`position: float = Field(..., ge=0)`), et un dépassement de durée le
+  // mettrait en seek au-delà de la fin. On borne donc ici, des deux côtés.
+  //
+  // Ne change pas de titre en fin de titre : un saut reste un saut, l'enchaînement
+  // appartient à `skip`.
+  const seekBy = useCallback(
+    (delta: number) => {
+      const current = state?.position ?? 0;
+      const duration = state?.duration ?? 0;
+      const target = Math.max(current + delta, 0);
+      return run(() => api.seek(duration > 0 ? Math.min(target, duration) : target));
+    },
+    [run, state?.position, state?.duration],
+  );
   const setVolume = useCallback(async (volume: number) => {
     try {
       await api.volume(volume);
@@ -234,20 +269,30 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     return () => window.clearTimeout(id);
   }, [error]);
 
-  // Espace = lecture/pause, comme dans les lecteurs web. `preventDefault` est
-  // indispensable : sans lui, un bouton resté focus (après un clic) serait
-  // activé en plus du raccourci, soit deux actions pour une frappe.
+  // Espace = lecture/pause, ← / → = saut de 5 s, comme dans les lecteurs web.
+  // `preventDefault` est indispensable : sans lui, un bouton resté focus (après
+  // un clic) serait activé en plus du raccourci, soit deux actions pour une
+  // frappe. C'est aussi ce qui empêche la page de défiler sur ← / →.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.code !== "Space" && event.key !== " ") return;
+      const delta =
+        event.key === "ArrowLeft" ? -SEEK_STEP_SECONDS
+        : event.key === "ArrowRight" ? SEEK_STEP_SECONDS
+        : 0;
+      const isSpace = event.code === "Space" || event.key === " ";
+      if (delta === 0 && !isSpace) return;
       if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
       if (isTextEntry(event.target)) return;
+      // Un curseur focalisé garde ses flèches (Radix fait déjà son pas) : sinon
+      // une flèche déclencherait son pas ET le saut global.
+      if (delta !== 0 && isRangeControl(event.target)) return;
       event.preventDefault();
-      void togglePause();
+      if (delta !== 0) void seekBy(delta);
+      else void togglePause();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [togglePause]);
+  }, [togglePause, seekBy]);
 
   return (
     <PlayerContext.Provider
@@ -263,6 +308,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         jump,
         togglePause,
         seek,
+        seekBy,
         setVolume,
         setShuffle,
         setRepeat,
