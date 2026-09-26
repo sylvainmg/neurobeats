@@ -241,8 +241,13 @@ export function ChatComposer({
       <div className="flex items-center gap-2">
         <div
           className={cn(
-            "bg-surface-hover flex-1 rounded-3xl",
-            atLimit && "ring-destructive/50 ring-1",
+            // L'anneau de focus est porté par la PASTILLE, pas par le
+            // textarea : ce dernier est sans bordure et transparent, or un
+            // `ring` est une box-shadow EXTERNE — il débordait donc de 2 px
+            // autour de la pastille au lieu de la border. La pastille est la
+            // surface visible, c'est elle qui doit se border au focus.
+            "bg-surface-hover focus-within:ring-ring/60 focus-within:ring-2 flex-1 rounded-3xl",
+            atLimit && "focus-within:ring-destructive/60",
           )}
         >
           <Textarea
@@ -259,10 +264,7 @@ export function ChatComposer({
             autoComplete="off"
             maxLength={MAX_MESSAGE_CHARS}
             disabled={disabled}
-            className={cn(
-              "text-foreground max-h-40 rounded-3xl",
-              atLimit && "focus-visible:ring-destructive",
-            )}
+            className="text-foreground max-h-40 rounded-3xl"
           />
         </div>
         {running ? (

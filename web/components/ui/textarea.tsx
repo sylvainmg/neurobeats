@@ -38,15 +38,37 @@ export function Textarea({
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto"; // repart de la hauteur naturelle pour mesurer
-    const next = Math.min(el.scrollHeight, maxHeight);
-    el.style.height = `${next}px`;
-    // Le défilement n'apparaît qu'une fois le plafond atteint.
-    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
+    // Un conteneur masqué (`display:none`, onglet inactif…) ne donne aucune
+    // hauteur : `scrollHeight` y vaut 0, et le 0 resterait figé jusqu'à la
+    // première frappe. On ne fige donc rien tant que la mesure est vide, et on
+    // laisse la hauteur naturelle (`rows`) prendre le relais.
+    const measured = el.scrollHeight;
+    if (measured > 0) {
+      const next = Math.min(measured, maxHeight);
+      el.style.height = `${next}px`;
+      // Le défilement n'apparaît qu'une fois le plafond atteint.
+      el.style.overflowY = measured > maxHeight ? "auto" : "hidden";
+    } else {
+      el.style.height = "";
+      el.style.overflowY = "hidden";
+    }
   }, [maxHeight]);
 
   useIsomorphicLayoutEffect(() => {
     resize();
   }, [props.value, resize]);
+
+  // Un onglet monté puis masqué (`forceMount` + `data-[state=inactive]:hidden`)
+  // se mesure à 0 à l'ouverture, et le passage en visible n'est pas un
+  // changement de `value` : sans cette observation, la hauteur resterait figée
+  // jusqu'à la première saisie.
+  useIsomorphicLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => resize());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [resize]);
 
   return (
     <textarea
@@ -67,7 +89,12 @@ export function Textarea({
         }
       }}
       className={cn(
-        "border-input placeholder:text-muted-foreground focus-visible:ring-ring/50 block w-full resize-none overflow-hidden rounded-2xl border-none bg-transparent px-4 py-2.5 text-sm leading-relaxed outline-none focus-visible:ring-2",
+        // `border-none` + `bg-transparent` : ce composant est transparent et n'a
+        // pas de bordure, il n'est jamais la surface visible. Un `ring` y
+        // déborderait de sa propre largeur (box-shadow externe) au lieu de
+        // border l'élément — l'anneau de focus est donc porté par le conteneur
+        // qui porte le fond, via `focus-within:`.
+        "placeholder:text-muted-foreground block w-full resize-none overflow-hidden rounded-2xl border-none bg-transparent px-4 py-2.5 text-sm leading-relaxed outline-none",
         className,
       )}
     />
