@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Loader2, Plus } from "lucide-react";
+import { Loader2, Minus, Plus } from "lucide-react";
 
 import {
   Dialog,
@@ -24,8 +24,13 @@ export interface AddableTrack {
 
 /**
  * Modal « Ajouter à une playlist » (style Spotify) : liste les playlists du
- * store partagé en cochant celles qui contiennent déjà le titre, et permet d'en
- * créer une à la volée pour y ranger le son en cours.
+ * store partagé et permet d'en créer une à la volée pour y ranger le son en
+ * cours.
+ *
+ * Une playlist qui contient déjà le titre n'est plus une cible d'ajout :
+ * l'action bascule sur « Retirer », ce qui évite un aller-retour pour revenir en
+ * arrière. `contains` vient du même store que le reste de la liste — l'état
+ * affiché et l'action proposée partagent donc une seule source de vérité.
  */
 export function AddToPlaylistDialog({
   open,
@@ -36,13 +41,14 @@ export function AddToPlaylistDialog({
   onOpenChange: (open: boolean) => void;
   track: AddableTrack | null;
 }) {
-  const { playlists, loading, refresh, createPlaylist, addTrack } = usePlaylists();
+  const { playlists, loading, refresh, createPlaylist, addTrack, removeTrack } =
+    usePlaylists();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
-  // Garde synchrone : deux clics rapides ne doivent pas déclencher deux ajouts
-  // (l'état `busyId` ne bloque pas un second clic dans le même tick).
+  // Garde synchrone : deux clics rapides ne doivent pas déclencher deux
+  // mutations (l'état `busyId` ne bloque pas un second clic dans le même tick).
   const inFlight = useRef(false);
 
   const videoId = track?.video_id ?? "";
@@ -60,12 +66,29 @@ export function AddToPlaylistDialog({
     };
   }, [open, videoId, refresh]);
 
+  /**
+   * Affiche un retour sans fermer le dialogue.
+   *
+   * Réservé au retrait : on reste ouvert parce qu'on enchaîne généralement
+   * plusieurs retraits, et que la ligne vient de rebasculer sur « Ajouter » —
+   * la refermer ferait perdre la vue de ce qu'on vient de modifier.
+   */
+  const announce = useCallback((message: string) => {
+    setFeedback(message);
+  }, []);
+
+  /**
+   * Affiche un retour puis referme.
+   *
+   * Réservé à l'ajout : une fois le titre rangé, il n'y a plus rien à décider
+   * dans cette liste. Le délai laisse lire le message avant la fermeture.
+   */
   const closeSoon = useCallback(
     (message: string) => {
-      setFeedback(message);
+      announce(message);
       window.setTimeout(() => onOpenChange(false), 700);
     },
-    [onOpenChange],
+    [announce, onOpenChange],
   );
 
   /** À la fermeture, on repart d'un état vierge pour la prochaine ouverture. */
@@ -101,6 +124,26 @@ export function AddToPlaylistDialog({
     }
   }
 
+  async function removeFrom(id: string, name: string) {
+    if (!videoId || inFlight.current) return;
+    inFlight.current = true;
+    setBusyId(id);
+    setFeedback(null);
+    try {
+      // Même source de vérité que l'ajout : le store remplace la playlist par
+      // celle du serveur, donc l'état « déjà présent » disparaît et le compteur
+      // redescend. Le dialogue reste ouvert : l'utilisateur peut retirer le
+      // titre d'une autre playlist sans rouvrir.
+      await removeTrack(id, videoId);
+      announce(`Retiré de « ${name} »`);
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : "Retrait impossible.");
+    } finally {
+      inFlight.current = false;
+      setBusyId(null);
+    }
+  }
+
   async function createAndAdd() {
     const name = newName.trim();
     if (!name || !videoId || inFlight.current) return;
@@ -127,7 +170,9 @@ export function AddToPlaylistDialog({
         <DialogHeader>
           <DialogTitle>Ajouter à une playlist</DialogTitle>
           <DialogDescription id="add-to-playlist-desc">
-            {track ? "Choisis une playlist pour le titre en cours." : "Aucun titre en cours."}
+            {track
+              ? "Ajoute le titre à une playlist, ou retire-le de celles qui le contiennent déjà."
+              : "Aucun titre en cours."}
           </DialogDescription>
 
           {track && (
@@ -161,51 +206,87 @@ export function AddToPlaylistDialog({
             </p>
           ) : (
             <ul className="space-y-1">
-              {playlists.map((playlist) => (
-                <li key={playlist.id}>
-                  <button
-                    type="button"
-                    disabled={busyId !== null}
-                    onClick={() => void addTo(playlist.id, playlist.name)}
-                    className={cn(
-                      "hover:bg-surface-hover flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors",
-                      playlist.contains && "cursor-default",
-                    )}
-                  >
-                    <span className="relative block size-10 shrink-0 overflow-hidden rounded-md">
-                      {playlist.cover ? (
-                        <TrackCover
-                          videoId={playlist.cover}
-                          title={playlist.name}
-                          sizes={coverSizes(40)}
-                          className="size-10"
-                        />
-                      ) : (
-                        <span className="bg-surface-hover block size-10" />
+              {playlists.map((playlist) => {
+                // `contains` est undefined tant que le rafraîchissement d'ouverture
+                // n'est pas terminé : dans ce cas on laisse l'action d'ajout, qui
+                // reste sûre (le backend refuse un doublon).
+                const present = playlist.contains === true;
+                const busy = busyId === playlist.id;
+                return (
+                  <li key={playlist.id}>
+                    <div
+                      className={cn(
+                        "flex w-full items-center gap-3 rounded-lg p-2 transition-colors",
+                        present && "bg-surface-hover/40",
                       )}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="text-foreground block truncate text-sm font-medium">
-                        {playlist.name}
+                    >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void (present
+                            ? removeFrom(playlist.id, playlist.name)
+                            : addTo(playlist.id, playlist.name))
+                        }
+                        disabled={busyId !== null}
+                        aria-label={
+                          present
+                            ? `Retirer « ${track?.title ?? "ce titre"} » de la playlist ${playlist.name}`
+                            : `Ajouter « ${track?.title ?? "ce titre"} » à la playlist ${playlist.name}`
+                        }
+                        className={cn(
+                          "flex min-w-0 flex-1 items-center gap-3 text-left",
+                          !present && "hover:bg-surface-hover cursor-pointer rounded-md",
+                          present && "cursor-pointer",
+                        )}
+                      >
+                        <span className="relative block size-10 shrink-0 overflow-hidden rounded-md">
+                          {playlist.cover ? (
+                            <TrackCover
+                              videoId={playlist.cover}
+                              title={playlist.name}
+                              sizes={coverSizes(40)}
+                              className="size-10"
+                            />
+                          ) : (
+                            <span className="bg-surface-hover block size-10" />
+                          )}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span
+                            className={cn(
+                              "block truncate text-sm font-medium",
+                              present ? "text-muted-foreground" : "text-foreground",
+                            )}
+                          >
+                            {playlist.name}
+                          </span>
+                          <span className="text-muted-foreground block truncate text-xs">
+                            {present
+                              ? "Déjà dans cette playlist"
+                              : `${playlist.count} titre${playlist.count > 1 ? "s" : ""}`}
+                          </span>
+                        </span>
+                      </button>
+
+                      <span className="flex shrink-0 items-center gap-1 pr-1">
+                        {busy ? (
+                          <Loader2 className="text-muted-foreground size-4 animate-spin" />
+                        ) : present ? (
+                          <>
+                            <span className="text-muted-foreground text-xs">Retirer</span>
+                            <Minus className="text-muted-foreground size-4" />
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-muted-foreground text-xs">Ajouter</span>
+                            <Plus className="text-muted-foreground size-4" />
+                          </>
+                        )}
                       </span>
-                      <span className="text-muted-foreground block truncate text-xs">
-                        {playlist.contains
-                          ? "Déjà dans cette playlist"
-                          : `${playlist.count} titre${playlist.count > 1 ? "s" : ""}`}
-                      </span>
-                    </span>
-                    <span className="shrink-0">
-                      {busyId === playlist.id ? (
-                        <Loader2 className="text-muted-foreground size-4 animate-spin" />
-                      ) : playlist.contains ? (
-                        <Check className="text-primary size-4" />
-                      ) : (
-                        <Plus className="text-muted-foreground size-4" />
-                      )}
-                    </span>
-                  </button>
-                </li>
-              ))}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
