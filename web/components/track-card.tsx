@@ -72,7 +72,7 @@ export function TrackCard({
           sizes={sizes}
           rounded="rounded-lg"
           className="aspect-square w-full"
-          hq
+          source="auto"
         />
         {/* Affordance de lecture : bouton flottant façon Spotify. */}
         <span className="bg-primary text-primary-foreground absolute right-2 bottom-2 grid size-9 translate-y-1 place-items-center rounded-full opacity-0 shadow-lg transition-all group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100">

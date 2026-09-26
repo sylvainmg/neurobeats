@@ -10,6 +10,23 @@ import { cn } from "cn";
 const HQ_RETRY_MS = 2500;
 const HQ_TRIES = 3;
 
+/**
+ * Source unique d'une pochette — une image, une décision, zéro substitution.
+ *
+ * `"auto"` et `"hq"` se distinguent précisément parce qu'ils ne se ressemblent
+ * pas : `"auto"` superpose la vignette puis la remplace (donc l'image change une
+ * fois à l'écran), `"hq"` n'affiche que la jaquette (donc elle apparaît une fois).
+ * Choisir `"auto"` là où l'on veut une identité stable, c'est réintroduire le
+ * changement sous les yeux du lecteur.
+ */
+export type CoverSource =
+  /** Vignette YouTube seule : identité stable, pas d'appel backend. */
+  | "thumbnail"
+  /** Vignette YouTube, puis jaquette backend par-dessus (cartes, en-têtes). */
+  | "auto"
+  /** Pochette backend seule, sans vignette dessous : jamais de substitution. */
+  | "hq";
+
 /** Repli typographique : initiale du titre, si aucune jaquette ne charge. */
 function CoverInitial({ title }: { title: string }) {
   return (
@@ -88,16 +105,16 @@ function CoverImage({
   videoId,
   title,
   sizes,
-  hq,
+  source,
 }: {
   videoId: string;
   title: string;
   sizes: string;
-  hq: boolean;
+  source: CoverSource;
 }) {
   const sources = useMemo(() => thumbnailCandidates(videoId), [videoId]);
   const [index, setIndex] = useState(0);
-  const source = sources[index];
+  const thumb = sources[index];
 
   return (
     <>
@@ -107,22 +124,33 @@ function CoverImage({
         les rafales d'historique) et seule quand toutes les vignettes échouent.
       */}
       <CoverInitial title={title} />
-      {source && (
-        <>
-          <Image
-            key={source.src}
-            src={source.src}
-            alt=""
-            fill
-            sizes={sizes}
-            className="object-cover"
-            // Une jaquette letterboxée est agrandie pour que ses bandes noires
-            // sortent du carré, sans quoi elles apparaîtraient dans la pochette.
-            style={source.zoom !== 1 ? { transform: `scale(${source.zoom})` } : undefined}
-            onError={() => setIndex((current) => current + 1)}
-          />
-          {hq && <CoverHq videoId={videoId} />}
-        </>
+      {/*
+        `"hq"` ne pose AUCUNE vignette dessous : la jaquette backend s'affiche
+        seule, une fois, au-dessus de l'initiale. Superposer la vignette puis la
+        remplacer faisait changer l'image sous l'œil du lecteur, ~2,5 s après
+        l'ouverture (le backend répond 202 tant qu'il génère, le client retente
+        toutes les 2,5 s). Une seule source = une seule apparition.
+      */}
+      {source === "hq" ? (
+        <CoverHq videoId={videoId} />
+      ) : (
+        thumb && (
+          <>
+            <Image
+              key={thumb.src}
+              src={thumb.src}
+              alt=""
+              fill
+              sizes={sizes}
+              className="object-cover"
+              // Une jaquette letterboxée est agrandie pour que ses bandes noires
+              // sortent du carré, sans quoi elles apparaîtraient dans la pochette.
+              style={thumb.zoom !== 1 ? { transform: `scale(${thumb.zoom})` } : undefined}
+              onError={() => setIndex((current) => current + 1)}
+            />
+            {source === "auto" && <CoverHq videoId={videoId} />}
+          </>
+        )
       )}
     </>
   );
@@ -135,10 +163,24 @@ function CoverImage({
  * sont donc tentés en cascade, car une jaquette 320×180 agrandie dans une
  * pochette carrée apparaît floue.
  *
- * `hq` ajoute la pochette générée par le backend (jaquette d'album, frame HD,
- * vignette recadrée), qui se substitue a la vignette dès qu'elle est prête. À
- * réserver aux grandes pochettes (cartes, en-têtes) : les petites vignettes sont
- * déjà nettes avec la vignette YouTube, et cela éviterait de générer pour rien.
+ * `source` décide ce qui est affiché, et une seule chose à la fois :
+ * - `"thumbnail"` : la vignette YouTube. Suffisant et instantané partout où
+ *   l'icône du titre est déjà affichée à côté (file, lecteur, recherche) ;
+ * - `"auto"` : la vignette, puis la pochette du backend quand elle est prête ;
+ * - `"hq"` : la pochette du backend seule, sans vignette en dessous.
+ *
+ * Les deux derniers viennent de la même source que le backend, et pas
+ * toujours de la même image : celle-ci cherche d'abord une vraie jaquette
+ * d'album, puis une frame, puis la vignette recadrée. Un titre peut donc avoir
+ * deux images légitimes selon la surface — c'est assumé. Ce qui ne l'est pas,
+ * c'est de les faire changer pendant que l'utilisateur regarde : `"auto"`
+ * remplace la vignette par la jaquette quelques secondes après l'affichage, ce
+ * qui se voit comme un bug. Réserver `"auto"` aux grandes pochettes, dont
+ * aucune autre image n'est affichée à côté, et `"hq"` aux vues où l'on préfère
+ * attendre la jaquette plutôt que montrer la vignette.
+ *
+ * `sizes` ne sert qu'aux vignettes : la pochette du backend est déjà carrée et
+ * dimensionnée (webp), elle n'est jamais passée par l'optimiseur d'images.
  */
 export function TrackCover({
   videoId,
@@ -146,14 +188,14 @@ export function TrackCover({
   sizes,
   className,
   rounded = "rounded-md",
-  hq = false,
+  source = "thumbnail",
 }: {
   videoId: string;
   title: string;
   sizes: string;
   className?: string;
   rounded?: string;
-  hq?: boolean;
+  source?: CoverSource;
 }) {
   return (
     <span
@@ -169,7 +211,7 @@ export function TrackCover({
           videoId={videoId}
           title={title}
           sizes={sizes}
-          hq={hq}
+          source={source}
         />
       ) : (
         <CoverInitial title={title} />

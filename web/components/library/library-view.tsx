@@ -152,7 +152,7 @@ export function LibraryView() {
                           title={playlist.name}
                           sizes={coverSizes(200)}
                           className="size-full"
-                          hq
+                          source="auto"
                         />
                       ) : (
                         <span className="bg-surface-hover flex size-full items-center justify-center">

@@ -464,7 +464,7 @@ export function LyricsOverlay({
                 videoId={videoId}
                 title={title}
                 sizes={coverSizes(168)}
-                hq
+                source="hq"
                 className="shadow-lg size-20 rounded-lg sm:size-32 lg:size-36"
               />
             ) : null}

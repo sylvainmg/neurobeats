@@ -216,7 +216,13 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
       <header className="flex flex-col gap-6 sm:flex-row sm:items-end">
         <span className="relative block aspect-square w-40 shrink-0 overflow-hidden rounded-lg">
           {cover ? (
-            <TrackCover videoId={cover} title={playlist.name} sizes={coverSizes(160)} className="size-full" hq />
+            <TrackCover
+              videoId={cover}
+              title={playlist.name}
+              sizes={coverSizes(160)}
+              className="size-full"
+              source="auto"
+            />
           ) : (
             <span className="bg-surface-hover flex size-full items-center justify-center">
               <ListMusic className="text-muted-foreground size-8" />
