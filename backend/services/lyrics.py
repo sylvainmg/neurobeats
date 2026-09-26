@@ -50,6 +50,10 @@ logger = logging.getLogger(__name__)
 
 LRCLIB_BASE = "https://lrclib.net"
 GENIUS_SEARCH = "https://genius.com/api/search/multi"
+# L'API refuse per_page > 5 avec un 422 et un corps d'erreur : la recherche
+# Genius echouait entierement sur un 10. Cinq resultats suffisent : le score
+# de correspondance (titre + artiste) ne retient de toute facon qu'un seul hit.
+GENIUS_PER_PAGE = 5
 
 _USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) NeuroBeats/1.0"
 
@@ -424,7 +428,7 @@ def _genius(artist: str, title: str, channel: str) -> dict:
     on extrait les blocs data-lyrics-container de sa page.
     """
     query = urllib.parse.quote(coverart._search_term(f"{artist} {title}"))
-    data, code = _get_json(f"{GENIUS_SEARCH}?per_page=10&q={query}")
+    data, code = _get_json(f"{GENIUS_SEARCH}?per_page={GENIUS_PER_PAGE}&q={query}")
     if code == 0:
         return {"status": "network_error", "error": "Genius injoignable"}
     if code != 200:
