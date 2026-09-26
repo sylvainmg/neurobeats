@@ -127,6 +127,63 @@ check("le titre suivant est enchaine sans attendre la garde de 10 min",
       joues == ["aaaaaaaaaaa", "bbbbbbbbbbb"], str(joues))
 check("la boucle s'est arretee proprement", not boucle.is_alive())
 
+# --- [5] Le titre prepare doit avoir l'enchainement arme -----------------------
+# Symptome reellement observe : au demarrage, l'app charge le dernier titre en
+# pause et remplit la file ; le titre se joue, se termine, et tout s'arrete net
+# ("c'est le dernier titre") alors que la file contient des titres. Le seul
+# moteur d'enchainement est la boucle de streaming, or ce chemin ne la
+# demarrait pas : la file etait donc inerte.
+print("\n[5] titre prepare : l'enchainement est arme")
+state.STREAMING_MODE = False
+state.STREAMING_THREAD = None
+mpv_joue(0.0, 180.0)
+
+demarres = []
+
+
+def faux_start_streaming(mood="", force_genre=True, wait_current=False):
+    demarres.append({"mood": mood, "force_genre": force_genre,
+                     "wait_current": wait_current})
+    state.STREAMING_MODE = True
+    state.STREAMING_THREAD = threading.current_thread()
+    return json.dumps({"status": "streaming_started"}, ensure_ascii=False)
+
+
+# `prepare_playback` lit l'historique puis charge le titre ; on court-circuite
+# les deux et on n'observe que l'arme du flux.
+audio.hist_read = lambda n: ([{"video_id": "aaaaaaaaaaa"}] if n == 1 else [])
+audio._ensure_daemon = lambda: True
+audio.play_music = lambda video_id, **kw: json.dumps(
+    {"status": "playing", "title": "A"}, ensure_ascii=False)
+streaming.start_streaming = faux_start_streaming
+
+state._now_playing = False
+audio.prepare_playback()
+time.sleep(0.3)  # l'arme part dans un thread de fond
+check("preparer un titre arme la boucle de streaming", len(demarres) == 1,
+      str(demarres))
+check("l'arme attend la fin du titre deja charge",
+      bool(demarres) and demarres[0]["wait_current"] is True, str(demarres))
+check("STREAMING_MODE est vrai apres la preparation",
+      state.STREAMING_MODE is True)
+
+# Cas voisin : une interface qui se recharge laisse un titre joue mais aucune
+# boucle. `prepare_playback` doit alors armer l'enchainement sans ecraser le
+# titre en cours.
+print("\n[6] titre deja charge, sans boucle (reload d'interface)")
+demarres.clear()
+state.STREAMING_MODE = False
+state.STREAMING_THREAD = None
+state._now_playing = True
+res = json.loads(audio.prepare_playback())
+time.sleep(0.3)
+check("le titre en cours n'est pas ecrase", res.get("status") == "already_loaded",
+      str(res))
+check("malgre tout, l'enchainement est arme", len(demarres) == 1, str(demarres))
+
+state.STREAMING_MODE = False
+state.STREAMING_SKIP.set()
+
 failures = CHECKS.count(False)
 print(f"\n{len(CHECKS) - failures}/{len(CHECKS)} cas OK")
 sys.exit(1 if failures else 0)

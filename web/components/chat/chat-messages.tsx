@@ -234,7 +234,11 @@ export function ChatComposer({
       }}
       className={cn("nb-selectable border-border border-t p-3", disabled && "opacity-50 pointer-events-none")}
     >
-      <div className="flex items-stretch gap-2">
+      {/* `items-center` et non `items-stretch` : le bouton a une taille fixe
+          (size-8) alors que le champ s'agrandit avec le texte. En `stretch` le
+          bouton n'ayant pas de hauteur élastique, il retombait sur flex-start et
+          se collait en haut du champ, décalé de ~5px par rapport à son centre. */}
+      <div className="flex items-center gap-2">
         <div
           className={cn(
             "bg-surface-hover flex-1 rounded-3xl",

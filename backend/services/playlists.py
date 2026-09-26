@@ -181,7 +181,8 @@ def create_playlist_from(name: str, video_ids: list) -> str:
         if meta is None:
             continue
         songs.append({"video_id": vid, "title": meta.get("title", ""),
-                      "channel": meta.get("channel", "")})
+                      "channel": meta.get("channel", ""),
+                      "duration": meta.get("duration")})
         _remember(vid, meta.get("title", ""), meta.get("channel", ""))
     if not songs:
         return json.dumps({"error": "Titres inconnus du moteur (search_music d'abord)."},
@@ -234,7 +235,8 @@ def create_playlist(name: str, mood: str, count: int = 10) -> str:
             seen_ids.add(vid)
             chan_count[ch] += 1
             songs.append({"video_id": vid, "title": r.get("title", ""),
-                          "channel": r.get("channel", "")})
+                          "channel": r.get("channel", ""),
+                          "duration": r.get("duration")})
             _remember(vid, r.get("title", ""), r.get("channel", ""))
             added = True
             print(f"  … titres {len(songs)}/{count} : {r.get('title', '')[:50]}", flush=True)
@@ -327,7 +329,8 @@ def add_track(playlist: str, video_id: str) -> str:
         if any(s.get("video_id") == vid for s in entry["songs"]):
             return json.dumps({"status": "already_present", "playlist": entry}, ensure_ascii=False)
         entry["songs"].append({"video_id": vid, "title": meta.get("title", ""),
-                               "channel": meta.get("channel", "")})
+                               "channel": meta.get("channel", ""),
+                               "duration": meta.get("duration")})
         entry["updated"] = _now()
         _remember(vid, meta.get("title", ""), meta.get("channel", ""))
         _save_playlists(playlists)

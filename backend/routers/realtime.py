@@ -107,9 +107,12 @@ async def websocket_endpoint(ws: WebSocket):
     _tprint(f"[ws] client connecte ({len(_CLIENTS)})")
     # Instantane immediat : l'UI est a jour sans attendre le premier tick.
     await _send(ws, _snapshot())
-    # Rien de charge : on prepare le dernier titre (EN PAUSE, effet voulu) et la
-    # file, pour que le client puisse reprendre ou passer au suivant sans chercher.
-    if not state._now_playing:
+    # Rien de charge, OU charge mais sans enchainement arme : on prepare le
+    # dernier titre (EN PAUSE, effet voulu) et la file, pour que le client puisse
+    # reprendre ou passer au suivant sans chercher. Sans ce second cas, un simple
+    # rechargement d'interface laissait un titre joue mais aucune boucle pour
+    # enchainer : la fin du titre arretait tout net.
+    if not state._now_playing or not state.STREAMING_MODE:
         threading.Thread(target=_prepare, daemon=True, name="prepare").start()
     try:
         while True:

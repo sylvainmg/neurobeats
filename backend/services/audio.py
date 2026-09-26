@@ -617,6 +617,33 @@ def _prefill_queue():
         print(f"  [prepare] preparation de la file echouee : {exc}", flush=True)
 
 
+def _arm_streaming_after_prepare():
+    """Arme l'enchainement infini autour du titre prepare.
+
+    `prepare_playback` charge un titre en pause et remplit la file, mais la seule
+    chose qui fait passer au titre suivant est la boucle de streaming — et rien
+    sur ce chemin ne la demarrait. La file etait donc laissee inerte : a la fin
+    du titre prepare, mpv se decharge, `playing` passe a faux et les boutons de
+    transport se desactivent, alors que la file contient bien des titres.
+
+    On demarre donc la boucle en `wait_current=True` : elle attend la fin du
+    titre deja charge avant de puiser dans la file, si bien que le titre prepare
+    joue jusqu'au bout puis l'enchainement prend le relais.
+
+    Sans effet si un flux tourne deja (`start_streaming` le detecte) ni si rien
+    n'est charge (la boucle se referme aussitot).
+    """
+    from services.streaming import start_streaming
+
+    def _start():
+        try:
+            start_streaming(mood="", force_genre=False, wait_current=True)
+        except Exception as exc:
+            _tprint(f"[prepare] enchainement infini non arme : {exc}")
+
+    threading.Thread(target=_start, daemon=True, name="prepare-stream").start()
+
+
 def prepare_playback() -> str:
     """Prepare la lecture a l'ouverture du client web : dernier titre charge, en pause.
 
@@ -624,9 +651,11 @@ def prepare_playback() -> str:
     l'utilisateur n'a pas appuye sur Lecture : effet voulu) et SANS l'ecrire dans
     l'historique (ce n'est pas une ecoute).
 
-    Ne demarre NI la lecture NI le flux infini : un demarrage a froid doit rester
-    silencieux. Seule la grace de 10 s (presence temps reel) laisse une lecture
-    deja en cours continuer lors d'une absence courte.
+    Ne demarre NI la lecture NI le son : un demarrage a froid doit rester
+    silencieux. L'enchainement infini, lui, est arme dans tous les cas — un
+    titre charge sans boucle s'arretait net a la fin, file pleine ou non. Seule
+    la grace de 10 s (presence temps reel) laisse une lecture deja en cours
+    continuer lors d'une absence courte.
 
     Daemon pas encore pret (redemarrage du backend pendant une connexion) : on
     retente en arriere-plan de facon bornee ; jamais aucun repli direct.
@@ -639,6 +668,10 @@ def prepare_playback() -> str:
     try:
         if state._now_playing:
             # Deja quelque chose en lecture (ou en pause) : on ne l'ecrase pas.
+            # L'enchainement peut ne pas etre arme (reload d'interface, retour
+            # apres une absence) : on l'arme malgre tout.
+            if not state.STREAMING_MODE:
+                _arm_streaming_after_prepare()
             return json.dumps({"status": "already_loaded"}, ensure_ascii=False)
         last = hist_read(1)
         video_id = (last[0].get("video_id") if last else None)
@@ -661,6 +694,7 @@ def prepare_playback() -> str:
                 except Exception:
                     return
                 if res.get("status") == "playing":
+                    _arm_streaming_after_prepare()
                     threading.Thread(target=_prefill_queue, daemon=True,
                                      name="prefill-queue").start()
             threading.Thread(target=_retry_prepare, daemon=True,
@@ -669,6 +703,7 @@ def prepare_playback() -> str:
         res = json.loads(play_music(video_id, autoplay=False, log=False))
         if res.get("status") != "playing":
             return json.dumps(res, ensure_ascii=False)
+        _arm_streaming_after_prepare()
         # File pre-remplie en tache de fond : le titre prepare ne doit pas etre
         # le seul propose (« Suivant » et reprise doivent etre immediats).
         threading.Thread(target=_prefill_queue, daemon=True, name="prefill-queue").start()

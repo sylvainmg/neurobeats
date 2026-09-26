@@ -124,7 +124,12 @@ def _tracks_of(playlist: dict) -> list:
             continue
         meta = state.LAST_SEARCH.get(video_id) or _meta(video_id) or {}
         cached = state.STREAM_CACHE.get(video_id) or {}
-        duration = preparation.duree(video_id) or cached.get("duration") or song.get("duration")
+        # La duree alimente le budget d'attente du telephone : sans elle, un
+        # titre encore inconnu du bureau pese 0 et se fait abandonner au bout de
+        # 90 s, avant meme qu'un worker ne le prenne. On la cherche donc partout
+        # ou elle est connue, la playlist en comprise.
+        duration = (preparation.duree(video_id) or cached.get("duration")
+                    or meta.get("duration") or song.get("duration"))
         titre = song.get("title") or meta.get("title") or ""
         chaine = song.get("channel") or meta.get("channel") or ""
         if preparation.ACTIF:
