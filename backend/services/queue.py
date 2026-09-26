@@ -511,16 +511,23 @@ def _collect(gen: int, target: int, force_genre: bool, publish=None, base=None) 
 
 
 def _warm_urls(tracks: list):
-    """Pre-resout en arriere-plan les URLs audio des titres de la file.
+    """Pre-resout en arriere-plan les URLs audio et les pochettes des titres
+    de la file.
 
     On connait deja les titres a venir : autant resoudre leur URL tout de suite
     pour que `play_music` la trouve en cache (RAM + disque) quand le flux y
     arrive -> enchainement instantane, y compris sur un "Suivant" repete.
 
+    Les pochettes suivent la meme demarche, pour une raison differente : sans
+    cela, un titre venant d'une file deja construite n'a pas de jaquette en
+    cache, et le backend repond 202 pendant qu'il genere. La vue des paroles
+    attend alors plusieurs secondes avant d'afficher une image.
+
     Non bloquant : les resolutions partent sur le pool de prefetch (2 a la fois),
     le serveur travaille en fond sans retarder la lecture ni la reponse API.
     """
     from services.audio import _prefetch
+    covers = 0
     count = 0
     for track in tracks:
         vid = track.get("video_id")
@@ -531,8 +538,24 @@ def _warm_urls(tracks: list):
             count += 1
         except Exception as exc:
             _tprint(f"[queue] warm url echec ({vid}) : {exc}")
+        # `ensure_async` ne leve jamais sur un echec de generation : la pochette
+        # est un bonus, elle ne doit jamais interrompre le prechauffage audio.
+        # Titre et artiste sont transmis quand la file les contient : la
+        # recherche d'album se fait alors sur le bon nom, pas sur le video_id.
+        try:
+            from services import covers as cover_service
+            cover_service.ensure_async(
+                vid,
+                title=track.get("title", "") or "",
+                channel=track.get("channel", "") or "",
+            )
+            covers += 1
+        except Exception as exc:
+            _tprint(f"[queue] warm pochette echec ({vid}) : {exc}")
     if count:
         _tprint(f"[queue] prechauffage de {count} URL(s) en arriere-plan")
+    if covers:
+        _tprint(f"[queue] prechauffage de {covers} pochette(s) en arriere-plan")
 
 
 def queue_build(gen: int, mood: str = "", force_genre: bool = True, target: int = QUEUE_TARGET):

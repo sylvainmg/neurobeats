@@ -43,7 +43,13 @@ function CoverInitial({ title }: { title: string }) {
  * n'a pas fini de générer la pochette il répond 202, et la vignette reste en
  * place — jamais de trou, jamais d'image fausse, et aucun blocage de l'affichage.
  */
-function CoverHq({ videoId }: { videoId: string }) {
+function CoverHq({
+  videoId,
+  onReady,
+}: {
+  videoId: string;
+  onReady?: () => void;
+}) {
   const [src, setSrc] = useState(() => coverHqUrl(videoId));
   const [ready, setReady] = useState(false);
   const timer = useRef<number | null>(null);
@@ -55,6 +61,10 @@ function CoverHq({ videoId }: { videoId: string }) {
     },
     [],
   );
+
+  // Signale une seule fois la première apparition : le parent en sert à masquer
+  // la vignette du dessous, qui ne doit pas rester visible en doublon.
+  const notified = useRef(false);
 
   function retry() {
     // Échec définitif (vidéo privée, aucune source) ou trop d'essais : on en
@@ -72,6 +82,14 @@ function CoverHq({ videoId }: { videoId: string }) {
     );
   }
 
+  function handleLoad() {
+    setReady(true);
+    if (!notified.current) {
+      notified.current = true;
+      onReady?.();
+    }
+  }
+
   if (!src) return null;
   return (
     // Un <Image> ici imposerait d'autoriser l'hote du backend dans next.config,
@@ -84,7 +102,7 @@ function CoverHq({ videoId }: { videoId: string }) {
       aria-hidden="true"
       loading="lazy"
       decoding="async"
-      onLoad={() => setReady(true)}
+      onLoad={handleLoad}
       onError={retry}
       className={cn(
         "absolute inset-0 size-full object-cover transition-opacity duration-500 motion-reduce:transition-none",
@@ -115,6 +133,10 @@ function CoverImage({
   const sources = useMemo(() => thumbnailCandidates(videoId), [videoId]);
   const [index, setIndex] = useState(0);
   const thumb = sources[index];
+  // En `"hq"`, la vignette ne sert que de filet : elle reste dessous tant que la
+  // pochette du backend n'a pas été chargée, puis disparaît. On ne superpose
+  // donc jamais deux images définitives l'une sur l'autre.
+  const [hqVisible, setHqVisible] = useState(false);
 
   return (
     <>
@@ -125,14 +147,29 @@ function CoverImage({
       */}
       <CoverInitial title={title} />
       {/*
-        `"hq"` ne pose AUCUNE vignette dessous : la jaquette backend s'affiche
-        seule, une fois, au-dessus de l'initiale. Superposer la vignette puis la
-        remplacer faisait changer l'image sous l'œil du lecteur, ~2,5 s après
-        l'ouverture (le backend répond 202 tant qu'il génère, le client retente
-        toutes les 2,5 s). Une seule source = une seule apparition.
+        `"hq"` empile les deux sources : la vignette d'abord — elle est servie
+        par un CDN et arrive tout de suite — puis la pochette du backend par
+       -dessus quand elle est prête, en masquant la vignette. Sans la vignette,
+        un titre venu d'une file déjà créée attendait plusieurs secondes le
+        backend (qui répond 202 tant qu'il génère) et l'utilisateur regardait
+        une initiale pendant tout ce temps.
       */}
       {source === "hq" ? (
-        <CoverHq videoId={videoId} />
+        <>
+          {thumb && (
+            <Image
+              key={thumb.src}
+              src={thumb.src}
+              alt=""
+              fill
+              sizes={sizes}
+              className={cn("object-cover", hqVisible && "opacity-0")}
+              style={thumb.zoom !== 1 ? { transform: `scale(${thumb.zoom})` } : undefined}
+              onError={() => setIndex((current) => current + 1)}
+            />
+          )}
+          <CoverHq videoId={videoId} onReady={() => setHqVisible(true)} />
+        </>
       ) : (
         thumb && (
           <>
