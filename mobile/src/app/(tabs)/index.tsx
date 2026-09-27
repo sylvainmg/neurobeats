@@ -324,7 +324,7 @@ export default function Bibliotheque() {
       });
       return;
     }
-    if (aleatoire) await jouerAleatoirement(file, 0);
+    if (aleatoire) await jouerAleatoirement(file);
     else await jouer(file, 0);
     router.push("/player");
   };

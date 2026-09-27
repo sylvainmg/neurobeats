@@ -719,7 +719,7 @@ export default function PagePlaylist() {
                     <Bouton
                       titre="Aléatoire"
                       onPress={async () => {
-                        await jouerAleatoirement(fileDeLaPlaylist(), 0);
+                        await jouerAleatoirement(fileDeLaPlaylist());
                         router.push("/player");
                       }}
                       icone={<IconAleatoire size={18} color={colors.onPrimary} />}

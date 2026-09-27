@@ -374,13 +374,22 @@ export function basculerAleatoire() {
  * réordonnée : l'origine est conservée dans `fileOriginale` (rendue telle
  * quelle quand on coupe l'aléatoire), et l'affichage de la bibliothèque garde
  * son indexation et son ordre. `melanger` ne touche pas à la table donnée.
+ *
+ * Le titre de tête est TIRÉ au sort, pas pris en tête de liste : sans cela,
+ * « Aléatoire » démarrait systématiquement sur le premier titre littéral de la
+ * playlist, ce qui se lisait comme un bouton qui ne mélange pas. L'index reste
+ * transmissible pour démarrer volontairement sur un titre précis ; par défaut,
+ * le tirage est libre.
  */
-export async function jouerAleatoirement(nouvelleFile: PisteLecture[], index = 0) {
+export async function jouerAleatoirement(nouvelleFile: PisteLecture[], index?: number) {
   await preparerLecteur();
   const magasin = useLecture.getState();
   if (nouvelleFile.length === 0) return;
   fileOriginale = [...nouvelleFile];
-  const choisi = nouvelleFile[index] ?? nouvelleFile[0];
+  const choisi =
+    index !== undefined
+      ? (nouvelleFile[index] ?? nouvelleFile[0])
+      : nouvelleFile[Math.floor(Math.random() * nouvelleFile.length)];
   file = nouvelleFile.length > 1 ? tirageEnTete(nouvelleFile, choisi) : [choisi];
   magasin.majMelange(true);
   magasin.definirFile(file, 0);
