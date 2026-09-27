@@ -25,6 +25,7 @@ import {
   useTransferTicket,
 } from "@/components/library/transfer-dialog";
 import { TrackCover } from "@/components/track-cover";
+import { LocalFilter, correspond } from "@/components/library/local-filter";
 import { ApiError, api, type Track } from "@/lib/api";
 import { usePlaylists } from "@/lib/playlists";
 import { usePlaylistLocal } from "@/lib/use-playlist-local";
@@ -36,7 +37,11 @@ function formatDate(iso: string): string {
   if (!iso) return "";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+  return date.toLocaleDateString("fr-FR", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
 }
 
 /** Détail d'une playlist : lecture, renommage, ajout/retrait de titres, suppression. */
@@ -58,9 +63,12 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
   const [renaming, setRenaming] = useState(false);
   const [editName, setEditName] = useState("");
   const [adding, setAdding] = useState(false);
+  // Recherche pour AJOUTER un titre (réseau, backend). Distincte de
+  // `filtreTitres`, qui ne fait que trier l'affichage de la liste en place.
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Track[]>([]);
   const [searching, setSearching] = useState(false);
+  const [filtreTitres, setFiltreTitres] = useState("");
   const [busy, setBusy] = useState(false);
   // Index du titre dont le son se charge (le backend ne répond qu'au démarrage).
   const [pendingIndex, setPendingIndex] = useState<number | null>(null);
@@ -69,7 +77,8 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
   const transfer = useTransferTicket(playlistId);
   // Téléchargement local : ce que ce poste garde sur son disque pour cette
   // playlist. `manquant` pilote le bouton, `estPret` la pastille par titre.
-  const { local, downloading, download, estPret } = usePlaylistLocal(playlistId);
+  const { local, downloading, download, estPret } =
+    usePlaylistLocal(playlistId);
   // Hors ligne, aucun téléchargement ne peut aboutir : le bouton reste visible
   // (il annonce l'état réel) mais inerte, et le bandeau explique pourquoi.
   const online = useOnline();
@@ -84,7 +93,10 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
       } catch (err) {
         if (!active) return;
         if (err instanceof ApiError && err.status === 404) setNotFound(true);
-        else setError(err instanceof Error ? err.message : "Playlist indisponible.");
+        else
+          setError(
+            err instanceof Error ? err.message : "Playlist indisponible.",
+          );
       }
     })();
     return () => {
@@ -161,6 +173,21 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
   // Ces valeurs sont calculées AVANT les retours anticipés : elles ne dépendent
   // que d'un store, jamais de `playlist`, et le reste du composant s'en sert.
   const songs = playlist?.songs ?? [];
+  // Ce que la liste affiche. `songs` reste la référence pour les compteurs :
+  // filtrer ne change pas le nombre réel de titres, seulement ceux visibles.
+  const songsVisibles = filtreTitres
+    ? songs.filter((song) => correspond(filtreTitres, song.title, song.channel))
+    : songs;
+  // videoId → position réelle. `play()` et le titre du bouton « Lecture »
+  // visent la position dans la playlist entière ; filtrer ne doit pas les
+  // décaler, sinon cliquer « 1 » en filtré jouerait le titre filtré.
+  //
+  // La Map est reconstruite à chaque rendu. C'est O(n) une fois, contre un
+  // `indexOf` O(n) par ligne rendue. Le React Compiler refuse d'ailleurs de
+  // mémoïser ici : `songs` change d'identité à chaque rendu (`?? []`).
+  const positionReelle = new Map(
+    songs.map((song, position) => [song.video_id, position]),
+  );
   const pret = local?.pret ?? 0;
   const manquant = Math.max(local?.manquant ?? 0, songs.length - pret);
   // « En cours » ne se déduit PAS du seul fait qu'il manque des titres : sinon
@@ -250,7 +277,12 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
                 aria-label="Nouveau nom de la playlist"
                 className="bg-surface-hover text-foreground h-11 min-w-0 flex-1 rounded-lg px-3 text-2xl font-bold outline-none"
               />
-              <Button type="submit" size="icon" aria-label="Valider" disabled={busy || !editName.trim()}>
+              <Button
+                type="submit"
+                size="icon"
+                aria-label="Valider"
+                disabled={busy || !editName.trim()}
+              >
                 <Check className="size-4" />
               </Button>
               <Button
@@ -264,22 +296,39 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
               </Button>
             </form>
           ) : (
-            <h1 className="truncate text-4xl font-bold tracking-tight">{playlist.name}</h1>
+            <h1 className="truncate text-4xl font-bold tracking-tight">
+              {playlist.name}
+            </h1>
           )}
 
           <p className="text-muted-foreground text-sm">
             {songs.length} titre{songs.length > 1 ? "s" : ""}
             {playlist.mood ? ` · ${playlist.mood}` : ""}
-            {playlist.created ? ` · créée le ${formatDate(playlist.created)}` : ""}
+            {playlist.created
+              ? ` · créée le ${formatDate(playlist.created)}`
+              : ""}
             {/* L'état local se dit dans la même ligne que le compte : « 12
                 titres, 4 sur cet appareil » est l'information qui décide si un
                 téléchargement est utile. */}
-            {pret > 0 ? ` · ${pret} sur cet appareil${manquant > 0 ? `, ${manquant} à télécharger` : ""}` : ""}
+            {pret > 0
+              ? ` · ${pret} sur cet appareil${manquant > 0 ? `, ${manquant} à télécharger` : ""}`
+              : ""}
           </p>
 
+          {/* Les libellés ci-dessous changent d'état (« Lecture » →
+              « Chargement… »). Sans largeur réservée, le bouton grandit et la
+              rangée entière se décale — visible surtout à droite, où les
+              boutons sont déjà proches du bord. `min-w-` fige la boîte ;
+              l'animation porte sur la couleur et l'icône, jamais sur la
+              géométrie. */}
           <div className="flex flex-wrap items-center gap-3">
+            {/* `min-w` est un plancher, pas un verrou : si le libellé le
+                plus long le dépasse, le bouton grandit quand même et la
+                rangée se décale. Mesuré : « Chargement… » fait 139 px, d'où
+                10rem plutôt que 8rem — la marge couvre le plus long état,
+                pas celui au repos. */}
             <Button
-              className="rounded-full"
+              className="min-w-40 rounded-full"
               size="lg"
               disabled={songs.length === 0 || pendingIndex !== null}
               onClick={() => void play(0)}
@@ -300,7 +349,12 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
               <Button
                 variant="secondary"
                 size="lg"
-                className="rounded-full"
+                // Le libellé passe par quatre états (« Télécharger »,
+                // « Compléter (12) », « Téléchargement… », « Téléchargée »).
+                // Sans largeur réservée, chaque changement déplace la rangée ;
+                // 13rem couvre le plus long d'entre eux sans laisser de vide
+                // sur les états courts.
+                className="min-w-52 rounded-full"
                 disabled={!online || enCours || manquant === 0}
                 title={
                   !online
@@ -401,7 +455,11 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
               aria-label="Rechercher un titre à ajouter"
               className="bg-surface-hover text-foreground placeholder:text-muted-foreground h-9 min-w-0 flex-1 rounded-full px-4 text-sm outline-none"
             />
-            <Button type="submit" size="sm" disabled={searching || !query.trim()}>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={searching || !query.trim()}
+            >
               Chercher
             </Button>
           </form>
@@ -409,7 +467,9 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
           {results.length > 0 && (
             <ul className="space-y-1">
               {results.map((track) => {
-                const already = songs.some((s) => s.video_id === track.video_id);
+                const already = songs.some(
+                  (s) => s.video_id === track.video_id,
+                );
                 return (
                   <li
                     key={track.video_id}
@@ -422,7 +482,9 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
                       className="size-10 shrink-0"
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">{track.title}</span>
+                      <span className="block truncate text-sm font-medium">
+                        {track.title}
+                      </span>
                       <span className="text-muted-foreground block truncate text-xs">
                         {track.channel}
                       </span>
@@ -457,90 +519,127 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
           Cette playlist est vide. Ajoute des titres depuis la recherche.
         </div>
       ) : (
-        <ul className="space-y-1">
-          {songs.map((song, index) => {
-            const isPending = pendingIndex === index;
-            return (
-              <li
-                key={song.video_id}
-                className="group hover:bg-surface-hover flex items-center gap-3 rounded-lg p-2"
-              >
-                <button
-                  type="button"
-                  onClick={() => void play(index)}
-                  disabled={pendingIndex !== null}
-                  aria-busy={isPending || undefined}
-                  aria-label={
-                    isPending ? `Chargement de ${song.title}` : `Lire ${song.title}`
-                  }
-                  className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:cursor-wait"
-                >
-                  <span className="text-muted-foreground w-5 shrink-0 text-right text-xs tabular-nums">
-                    {index + 1}
-                  </span>
-                  <span className="relative size-10 shrink-0">
-                    <TrackCover
-                      videoId={song.video_id}
-                      title={song.title}
-                      sizes={coverSizes(40)}
-                      className="size-10"
-                    />
-                    {/* Le titre demandé porte le seul indicateur animé : on sait
+        <>
+          {/* Filtre local, sur les titres déjà chargés : pas de réseau, donc
+              instantané même sur une longue playlist. Le compte reste based sur
+              `songs`, jamais sur la vue filtrée : « 12 sur 40 » décrit la
+              playlist entière, pas l'affichage. */}
+          <LocalFilter
+            label="Rechercher un titre dans cette playlist"
+            placeholder="Rechercher un titre…"
+            singulier="titre"
+            pluriel="titres"
+            total={songs.length}
+            shown={songsVisibles.length}
+            onQuery={setFiltreTitres}
+            className="mb-3"
+          />
+
+          {songsVisibles.length === 0 ? (
+            <div className="text-muted-foreground bg-surface rounded-lg p-8 text-center text-sm">
+              Aucun titre ne correspond à « {filtreTitres} ».
+            </div>
+          ) : (
+            <ul className="space-y-1">
+              {songsVisibles.map((song, indexAffiche) => {
+                // L'index affiché et l'index réel ne coïncident plus dès qu'un
+                // filtre est actif : `play()` et le titre du bouton « Lecture »
+                // visent la position dans la playlist entière, pas dans la vue.
+                // Sans cette conversion, cliquer « 1 » en filtré jouerait le
+                // titre filtré — et « Lecture » démarrerait le mauvais morceau.
+                const index = positionReelle.get(song.video_id) ?? indexAffiche;
+                const isPending = pendingIndex === index;
+                return (
+                  <li
+                    key={song.video_id}
+                    className="group hover:bg-surface-hover flex items-center gap-3 rounded-lg p-2"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => void play(index)}
+                      disabled={pendingIndex !== null}
+                      aria-busy={isPending || undefined}
+                      aria-label={
+                        isPending
+                          ? `Chargement de ${song.title}`
+                          : `Lire ${song.title}`
+                      }
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:cursor-wait"
+                    >
+                      <span className="text-muted-foreground w-5 shrink-0 text-right text-xs tabular-nums">
+                        {index + 1}
+                      </span>
+                      <span className="relative size-10 shrink-0">
+                        <TrackCover
+                          videoId={song.video_id}
+                          title={song.title}
+                          sizes={coverSizes(40)}
+                          className="size-10"
+                        />
+                        {/* Le titre demandé porte le seul indicateur animé : on sait
                         lequel charge, même dans une longue playlist. Le voile est
                         celui de l'historique d'écoute, pour que le geste se lise
                         pareil partout. */}
-                    <span
-                      className={cn(
-                        "bg-background/60 absolute inset-0 grid place-items-center rounded-lg transition-opacity",
-                        isPending ? "opacity-100" : "opacity-0",
-                      )}
-                    >
-                      <Loader2 className="text-primary size-4 animate-spin" aria-hidden="true" />
-                    </span>
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span
-                      className={cn(
-                        "block truncate text-sm font-medium",
-                        isPending && "text-primary",
-                      )}
-                    >
-                      {song.title}
-                    </span>
-                    <span className="text-muted-foreground block truncate text-xs">
-                      {/* Le sous-titre bascule sur l'état, comme dans l'historique :
+                        <span
+                          className={cn(
+                            "bg-background/60 absolute inset-0 grid place-items-center rounded-lg transition-opacity",
+                            isPending ? "opacity-100" : "opacity-0",
+                          )}
+                        >
+                          <Loader2
+                            className="text-primary size-4 animate-spin"
+                            aria-hidden="true"
+                          />
+                        </span>
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className={cn(
+                            "block truncate text-sm font-medium",
+                            isPending && "text-primary",
+                          )}
+                        >
+                          {song.title}
+                        </span>
+                        <span className="text-muted-foreground block truncate text-xs">
+                          {/* Le sous-titre bascule sur l'état, comme dans l'historique :
                           l'utilisateur sait que le clic a pris, et non qu'il a
                           échoué, tant que le son n'a pas démarré. */}
-                      {isPending ? "Chargement du titre…" : song.channel}
-                    </span>
-                  </span>
-                  {/* Pastille « sur cet appareil » : le seul endroit où l'on voit
+                          {isPending ? "Chargement du titre…" : song.channel}
+                        </span>
+                      </span>
+                      {/* Pastille « sur cet appareil » : le seul endroit où l'on voit
                       d'un coup d'œil ce qu'on peut écouter sans réseau. Discrète
                       (jamais une couleur alone), elle vaut pour le fichier
                       réellement présent sur le disque. */}
-                  {pret > 0 && estPret(song.video_id) && (
-                    <span
-                      title="Sur cet appareil — écoutable hors ligne"
-                      className="bg-primary/15 text-primary inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                      {pret > 0 && estPret(song.video_id) && (
+                        <span
+                          title="Sur cet appareil — écoutable hors ligne"
+                          className="bg-primary/15 text-primary inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                        >
+                          <HardDriveDownload
+                            className="size-3"
+                            aria-hidden="true"
+                          />
+                          Sur cet appareil
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Retirer ${song.title} de la playlist`}
+                      disabled={busy}
+                      onClick={() => void remove(song.video_id)}
+                      className="text-muted-foreground hover:text-destructive shrink-0 rounded-full p-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-40 max-md:opacity-100 pointer-coarse:opacity-100"
                     >
-                      <HardDriveDownload className="size-3" aria-hidden="true" />
-                      Sur cet appareil
-                    </span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Retirer ${song.title} de la playlist`}
-                  disabled={busy}
-                  onClick={() => void remove(song.video_id)}
-                  className="text-muted-foreground hover:text-destructive shrink-0 rounded-full p-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-40 max-md:opacity-100 pointer-coarse:opacity-100"
-                >
-                  <X className="size-4" />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+                      <X className="size-4" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </>
       )}
 
       <TransferDialog

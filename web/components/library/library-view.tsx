@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ListMusic, Pencil, Plus, Trash2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { TrackCover } from "@/components/track-cover";
+import { LocalFilter, correspond } from "@/components/library/local-filter";
 import { usePlaylists } from "@/lib/playlists";
 import { coverSizes } from "@/lib/track";
 import { cn } from "cn";
@@ -14,14 +15,28 @@ import { cn } from "cn";
 /** Grille des playlists : création, renommage en ligne, suppression. */
 export function LibraryView() {
   const router = useRouter();
-  const { playlists, loading, error, createPlaylist, renamePlaylist, deletePlaylist } =
-    usePlaylists();
+  const {
+    playlists,
+    loading,
+    error,
+    createPlaylist,
+    renamePlaylist,
+    deletePlaylist,
+  } = usePlaylists();
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [busy, setBusy] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [recherche, setRecherche] = useState("");
+
+  // Filtre local : la liste vit en mémoire, une recherche réseau serait
+  // absurde ici — et lente.
+  const visibles = useMemo(
+    () => playlists.filter((p) => correspond(recherche, p.name, p.mood)),
+    [playlists, recherche],
+  );
 
   const target = playlists.find((p) => p.id === pendingDelete) ?? null;
 
@@ -76,6 +91,22 @@ export function LibraryView() {
           </p>
         )}
 
+        {/* La barre précède la grille et se retire pendant le chargement :
+            un champ sur des squelettes annoncerait « 0 élément » alors que
+            la liste arrive. */}
+        {!loading && (
+          <LocalFilter
+            label="Rechercher une playlist"
+            placeholder="Rechercher une playlist…"
+            singulier="playlist"
+            pluriel="playlists"
+            total={playlists.length}
+            shown={visibles.length}
+            onQuery={setRecherche}
+            className="mb-5"
+          />
+        )}
+
         {loading ? (
           <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {Array.from({ length: 4 }, (_, i) => (
@@ -106,7 +137,11 @@ export function LibraryView() {
                     className="bg-surface-hover text-foreground placeholder:text-muted-foreground h-9 rounded-lg px-3 text-sm outline-none"
                   />
                   <div className="flex gap-2">
-                    <Button type="submit" size="sm" disabled={busy || !newName.trim()}>
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={busy || !newName.trim()}
+                    >
                       <Check className="size-4" />
                       Créer
                     </Button>
@@ -132,7 +167,7 @@ export function LibraryView() {
               )}
             </li>
 
-            {playlists.map((playlist) => {
+            {visibles.map((playlist) => {
               const href = `/playlists/${playlist.id}`;
               const editing = editingId === playlist.id;
               return (
@@ -246,7 +281,9 @@ export function LibraryView() {
         onOpenChange={(next) => {
           if (!next) setPendingDelete(null);
         }}
-        title={target ? `Supprimer « ${target.name} » ?` : "Supprimer la playlist ?"}
+        title={
+          target ? `Supprimer « ${target.name} » ?` : "Supprimer la playlist ?"
+        }
         description={
           target
             ? `Cette playlist et ses ${target.count} titre${target.count > 1 ? "s" : ""} seront définitivement supprimés.`

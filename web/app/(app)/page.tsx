@@ -2,12 +2,19 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Pause, Play, Search as SearchIcon, Sparkles } from "lucide-react";
+import {
+  Pause,
+  Play,
+  Search as SearchIcon,
+  Sparkles,
+  WifiOff,
+} from "lucide-react";
 
 import { SectionSkeleton, TrackCard } from "@/components/track-card";
 import { TrackCover } from "@/components/track-cover";
 import { usePlayer } from "@/components/player/player-context";
 import { api, type HomeContent, type HomeTrack } from "@/lib/api";
+import { useOnline } from "@/lib/online";
 import { coverSizes } from "@/lib/track";
 import { cn } from "cn";
 
@@ -170,6 +177,7 @@ function ResumeRow({
 
 export default function Home() {
   const { play, togglePause, loading, state } = usePlayer();
+  const { online } = useOnline();
   const [content, setContent] = useState<HomeContent | null>(null);
   const [failed, setFailed] = useState(false);
   // Les tentatives sont bornées : au-delà, on sort des squelettes pour afficher
@@ -249,6 +257,30 @@ export default function Home() {
           </p>
         )}
       </header>
+
+      {/* Réseau coupé : on le dit, et on propose ce qui marche quand même.
+          `navigator.onLine` ne garantit pas une sortie Internet (un Wi-Fi
+          d'hôtel sans accès en donne un « en ligne » mensonger) — c'est
+          pourquoi ce bandeau complète l'échec des requêtes plutôt que de
+          prétendre le deviner. Il se retire seul au retour du réseau. */}
+      {!online && (
+        <p
+          role="status"
+          className="border-border bg-surface flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border px-4 py-3 text-sm"
+        >
+          <WifiOff className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
+          <span className="font-medium">Pas de connexion.</span>
+          <span className="text-muted-foreground">
+            Les recommandations et la recherche YouTube sont indisponibles.
+          </span>
+          <Link
+            href="/library"
+            className="text-primary focus-visible:ring-ring/60 inline-flex items-center gap-1.5 font-medium focus-visible:ring-3 focus-visible:outline-none"
+          >
+            Écouter vos titres téléchargés
+          </Link>
+        </p>
+      )}
 
       {/* Reprise : le titre chargé — en cours, ou prêt à relancer. */}
       {(resume || pending) && (
