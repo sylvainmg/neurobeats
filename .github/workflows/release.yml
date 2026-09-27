@@ -1,0 +1,174 @@
+name: Release
+
+# Les quatre artefacts sont construits sur des runners natifs : un .exe
+# assemble sous Linux embarquerait des binaires Linux (mpv en ELF), et un .dmg
+# exige dmgbuild/hdiutil qui n'existent que sur macOS.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  desktop:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            target: AppImage
+            expect: ELF
+            artifact: NeuroBeats-0.1.0-x86_64.AppImage
+          - name: windows
+            os: windows-latest
+            target: nsis
+            expect: PE32
+            artifact: NeuroBeats Setup 0.1.0.exe
+          - name: macos
+            os: macos-latest
+            target: dmg
+            expect: Mach-O
+            artifact: NeuroBeats-0.1.0.dmg
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            desktop/package-lock.json
+            web/package-lock.json
+
+      - name: Installer les dépendances
+        run: |
+          npm ci --prefix desktop
+          npm ci --prefix web
+
+      - name: Construire l'application (${{ matrix.target }})
+        working-directory: desktop
+        run: npx electron-builder --${{ matrix.target }} --${{ matrix.target == 'dmg' && 'arm64' || 'x64' }} --publish never
+
+      # Garde-fou : l'ancien chaîne de packaging neraits qu'un avertissement
+      # quand un binaire manquait. Un runner sans mpv produisait donc une
+      # AppImage sans lecteur audio, et rien ne le signalait. On verifie donc
+      # que la charge utile est bien de la plate-forme annoncee.
+      - name: Vérifier la charge utile
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.expect }}" in
+            PE32)    DIR="release/win-unpacked" ;;
+            Mach-O)  DIR="release/mac" ;;
+            *)       DIR="release/linux-unpacked" ;;
+          esac
+
+          echo "--- binaire audio ---"
+          for f in mpv ffmpeg ffprobe; do
+            BIN="$DIR/resources/bin/$f"
+            [ "$f" = "mpv" ] && [ "${{ matrix.expect }}" = "PE32" ] && BIN="$BIN.exe"
+            if [ ! -f "$BIN" ]; then
+              echo "::error:: $f absent de l'artefact ($BIN)"
+              exit 1
+            fi
+            FILE_OUT=$(file -b "$BIN")
+            echo "$f : $FILE_OUT"
+            case "${{ matrix.expect }}" in
+              ELF)   echo "$FILE_OUT" | grep -q "ELF" || { echo "::error:: $f n'est pas un ELF"; exit 1; } ;;
+              PE32)  echo "$FILE_OUT" | grep -qE "PE32" || { echo "::error:: $f n'est pas un PE32"; exit 1; } ;;
+              Mach-O) echo "$FILE_OUT" | grep -q "Mach-O" || { echo "::error:: $f n'est pas un Mach-O"; exit 1; } ;;
+            esac
+          done
+
+          echo "--- moteur llama.cpp ---"
+          LLAMA="$DIR/resources/runtime/llama-server"
+          [ "${{ matrix.expect }}" = "PE32" ] && LLAMA="$LLAMA.exe"
+          [ -f "$LLAMA" ] || { echo "::error:: llama-server absent"; exit 1; }
+          file -b "$LLAMA"
+
+          echo "--- runtime Python (chemin que config.ts:75 attend) ---"
+          PY="$DIR/resources/backend/python/bin/python"
+          [ "${{ matrix.expect }}" = "PE32" ] && PY="$PY.exe"
+          [ -f "$PY" ] || { echo "::error:: runtime Python absent a $PY"; exit 1; }
+          "$PY" -V
+
+          echo "--- aucune donnee personnelle ---"
+          if find "$DIR/resources/backend" -name "*.db" -o -name "stream_cache.json" \
+             -o -name "music_history.json" -o -name "user_profile.json" \
+             | grep -q .; then
+            echo "::error:: donnees personnelles trouvees dans l'artefact"
+            exit 1
+          fi
+          echo "OK : produit vierge"
+
+      - name: Publier dans la release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: desktop/release/${{ matrix.artifact }}
+          draft: true
+
+  android:
+    name: android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Déchiffrer la clé de signature
+        id: keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          test -n "$KEYSTORE_B64" || {
+            echo "::warning::ANDROID_KEYSTORE_B64 absent — build signe avec la cle de debug (non publiable)"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+          echo "path=$RUNNER_TEMP/release.keystore" >> "$GITHUB_OUTPUT"
+
+      - name: Construire l'APK
+        working-directory: mobile
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          npm ci
+          npx expo prebuild --platform android --no-install
+          cd android
+          ./gradlew assembleRelease --no-daemon -x test
+
+      - name: Vérifier la signature
+        run: |
+          APK=mobile/android/app/build/outputs/apk/release/app-release.apk
+          test -f "$APK" || { echo "::error:: APK absent"; exit 1; }
+          "$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -r | head -1)/apksigner" \
+            verify --print-certs "$APK" | head -5
+          echo "APK : $(du -h "$APK" | cut -f1)"
+
+      - name: Publier dans la release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mobile/android/app/build/outputs/apk/release/app-release.apk
+          draft: true

@@ -195,6 +195,46 @@ RTX 4070, 1143 t/s en auto contre 60 t/s en forçant. Pour imposer une valeur :
 
 Cibles déclarées : AppImage (Linux), dmg (macOS), nsis (Windows). `extraResources` :
 `backend/`, `web/` (standalone), `bin/` (mpv/ffmpeg), `runtime/` (llama-server).
+
+### Chaîne de build
+
+Tout est en NodeJS (`scripts/*.mjs`), donc identique sous Linux, macOS et
+Windows. Les versions `*.sh` ont été retirées : `rsync`, `readlink -f`, `cp -a`
+et `uname -s` n'existent pas sur Windows, et `uname -s` sous Git Bash renvoie
+`MINGW64_NT` — ce qui faisait `exit 1` au premier build Windows.
+
+```bash
+npm run standalone    # build de web/ en standalone + neutralisation des chemins
+npm run fetch:llama   # binaire llama.cpp de la plate-forme
+npm run stage         # runtime Python + backend + binaires multimedia
+npm run package       # electron-builder
+```
+
+### Prérequis
+
+- **Node ≥ 22.12** (`engines` dans `package.json`) : seuil imposé par Electron,
+  et version à partir de laquelle `fs.cp` accepte un `filter` — le
+  remplaçant portable de `rsync --exclude`.
+- **7-Zip** sur Windows uniquement, pour les builds mpv (format `.7z`, que
+  Node ne lit pas). Présent par défaut sur les runners GitHub.
+- Les runtimes et binaires sont **téléchargés et vérifiés** (SHA-256) depuis
+  les manifestes `scripts/*-build.json`. Rien ne dépend donc du poste qui
+  construit.
+
+### Écarts de layout entre plates-formes
+
+Le runtime Python autonome n'a pas la même forme partout : les builds Unix
+mettent l'exécutable dans `bin/python`, le build Windows **à la racine**, avec
+`Lib/` et `Scripts/`. `config.ts:68-75` attend `python/bin/python.exe` ; c'est
+`stage-runtime.mjs` qui **normalise** le layout, pour que ce chemin reste
+valide sans modifier le code runtime.
+
+### Garde-fou : plus d'artefact muet
+
+Si mpv, ffmpeg, ffprobe ou llama-server manquent, `npm run stage` **sort en
+erreur**. L'ancien script n'affichait qu'un avertissement et continuait —
+un runner sans `/usr/bin/mpv` produisait une AppImage sans lecteur audio, sans
+que rien ne le signale.
 L'icône `build/icon.png` est synchronisée depuis `web/assets/logo-mark.png` et
 utilisée par l'AppImage, la fenêtre, le tray et le menu système.
 
