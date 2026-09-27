@@ -609,14 +609,12 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
                           />
                         </span>
                       </span>
-                      {/* Pas de centrage vertical ici : le <button> est
-                          `flex-1`, sa hauteur est donc celle de la pochette
-                          (40 px), et ses enfants sont étirés. Un
-                          `justify-center` recentrait le bloc de texte dans
-                          cette hauteur — c'est lui qui gardait la pochette
-                          « plus basse » que le texte. `justify-start` aligne
-                          le texte en haut, la pochette comprise. */}
-                      <span className="flex min-w-0 flex-1 flex-col justify-start">
+                      {/* `justify-center` aligne le bloc de texte sur la hauteur
+                          entière de la pochette (40 px). Sans lui, ce bloc de
+                          36 px était centré sur les 40 px et débordait de
+                          2 px vers le haut : la pochette semblait alors plus
+                          basse que le texte qu'elle accompagne. */}
+                      <span className="flex min-w-0 flex-1 flex-col justify-center">
                         <span
                           className={cn(
                             "flex items-center gap-1.5 truncate text-sm font-medium",
