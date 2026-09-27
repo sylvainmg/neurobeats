@@ -46,6 +46,7 @@ import {
   retirerDirectPerdu,
   type DirectPerdu,
 } from "@/transfer/directsPerdus";
+import { estLivre, estReprisable } from "@/transfer/relance";
 
 export type { Spec, Suivi };
 export type { EtatTelechargement } from "modules/downloader";
@@ -61,6 +62,18 @@ const EN_ATTENTE: Suivi["etat"][] = ["en_file", "en_cours", "suspendu", "echoue"
 
 /** Espacement des relances automatiques : on laisse respirer le réseau. */
 const DELAIS_RELANCE = [5000, 15000, 30000, 60000, 120000];
+
+/**
+ * Raison affichée quand le fichier est arrivé mais que son dépôt dans la
+ * bibliothèque publique échoue encore.
+ *
+ * Elle sert de marqueur : c'est le seul cas où un titre est `en_cours` sans
+ * qu'aucun octet ne soit en route, donc le seul qui mérite une reprise
+ * automatique. La constante évite de comparer une chaîne écrite ailleurs, ce
+ * qui avait déjà fait passer un lot de 28 titres sans que rien ne se
+ * déclenche.
+ */
+const RATION_PUBLICATION = "Publication dans la bibliothèque en attente…";
 
 /**
  * Une panne qui mérite une relance automatique : le réseau ou YouTube qui
@@ -173,6 +186,16 @@ export class Gestionnaire {
   private possessionsEcrites = new Set<string>();
   /** Veille sur la file : un direct muet ne doit pas la figer pour toujours. */
   private veilleDirect: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Titres téléchargés dont la publication dans la bibliothèque n'a pas
+   * abouti.
+   *
+   * Ils sont dans l'état `en_cours` sans qu'aucun octet ne soit en route :
+   * rien, dans l'état seul, ne les distingue d'un téléchargement normal, et
+   * la passe de relance les ignorait. Sur un lot de 28 titres, ces quelques
+   * lignes restaient bloquées jusqu'au rescan suivant.
+   */
+  private publicationsBloquees = new Set<string>();
   private options: Options = { wifiUniquement: true };
   /** Vrai quand le système a refusé : on télécharge alors nous-mêmes. */
   private modeSecours = false;
@@ -724,6 +747,13 @@ export class Gestionnaire {
     if (!module.transfertPersistant) return;
     const etats = await module.lireEtats();
     if (etats.length === 0) return;
+    // Les états vus par la passe de relance, pas ceux bruts du module : un
+    // titre téléchargé mais pas encore publié revient en `termine` sans URI
+    // `content://`, et la boucle ci-dessous le bascule en `en_cours` pour
+    // l'écran. En passant les bruts, la relance ne voyait qu'un `termine`,
+    // qu'elle ignore : le titre restait bloqué sur « publication en attente »
+    // jusqu'au prochain import. D'où le besoin de rescaner.
+    const vus: Suivi[] = [];
     for (const etat of etats) {
       // Une ligne arrêtée par l'utilisateur ne renaît pas du seul fait que le
       // système la revoit : ce serait annuler puis voir le titre repartir.
@@ -732,23 +762,38 @@ export class Gestionnaire {
       // ligne que le système dit terminée sans URI `content://` (publication
       // MediaStore en attente, ou reliquat de l'ancien repli file://) n'est
       // pas un titre jouable partout : on la montre « en cours », jamais reçu.
-      const livree =
-        etat.etat === "termine" && !!etat.uri && etat.uri.startsWith("content://");
-      const lu: Suivi = livree
-        ? etat
-        : {
-            ...etat,
-            etat: "en_cours",
-            raison: etat.raison ?? "Publication dans la bibliothèque en attente…",
-          };
+      const livree = estLivre(etat);
+      let lu: Suivi;
+      let publicationEnAttente = false;
+      if (livree) {
+        lu = etat;
+      } else {
+        // Le fichier est là, seul son dépôt dans la bibliothèque manque. On
+        // conserve la raison du module (elle explique le refus) en la
+        // complétant du marqueur, et on note la ligne pour la passe de
+        // relance : c'est ce cas, invisible dans l'état, qui laissait un lot
+        // entier bloqué sur « publication en attente ».
+        const raison = etat.raison;
+        publicationEnAttente = etat.etat === "termine";
+        lu = {
+          ...etat,
+          etat: "en_cours",
+          raison: raison
+            ? `${RATION_PUBLICATION} (${raison})`
+            : RATION_PUBLICATION,
+        };
+      }
       this.suivis.set(etat.videoId, lu);
+      vus.push(lu);
+      if (publicationEnAttente) this.publicationsBloquees.add(etat.videoId);
+      else this.publicationsBloquees.delete(etat.videoId);
       // Une ligne arrivée à bon port lave les compteurs de relance. Une ligne
       // annulée par l'utilisateur, elle, reste en paix (see annulations).
       if (lu.etat === "termine") this.relances.delete(etat.videoId);
     }
     await this.resoudreLesTitresManquants();
     this.publier();
-    this.relancerLesEchecs(etats);
+    this.relancerLesEchecs(vus);
   }
 
   /**
@@ -762,7 +807,7 @@ export class Gestionnaire {
   private relancerLesEchecs(etats: Suivi[]) {
     const maintenant = Date.now();
     for (const etat of etats) {
-      if (etat.etat !== "echoue") continue;
+      if (!estReprisable(etat, this.publicationsBloquees.has(etat.videoId))) continue;
       // Un arrêt demandé par l'utilisateur n'est pas une panne à masquer.
       if (this.annulations.has(etat.videoId)) continue;
       const compte = this.relances.get(etat.videoId);

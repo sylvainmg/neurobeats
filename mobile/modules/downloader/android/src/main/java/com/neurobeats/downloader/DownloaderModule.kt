@@ -197,19 +197,42 @@ class DownloaderModule : Module() {
         /**
          * Relance un transfert interrompu.
          *
-         * Android n'a pas de mise en pause : la demande a ete retiree, on en
-         * repose donc une, depuis le debut — l'ecran dit « Relancer », pas
-         * « Reprendre ». `wifiUniquement` est repasse ici parce qu'une relance
-         * doit obeir au meme reglage que le premier depart ; sans lui, elle
-         * consommerait des donnees mobiles, ce que le reglage promet d'eviter.
-         * La relance rejoint le lot d'origine : pas de nouvelle notification.
+         * Deux cas, et l'ordre compte. Si le fichier est déjà sur le disque —
+         * ce qui arrive quand seul le dépôt MediaStore a échoué — on ne
+         * retélécharge pas : on repose une demande « terminée » et on
+         * republie, ce que fait le balayage suivant. Sinon, on retire la
+         * demande et on en repose une depuis le debut, comme avant.
+         *
+         * Sans ce court-circuit, un lot dont les publications échouent se
+         * retéléchargeait intégralement à chaque relance, pour rien.
+         *
+         * Android n'a pas de mise en pause : une demande arrêtée a dû être
+         * retirée, on en repose donc une. `wifiUniquement` est repassé ici
+         * parce qu'une relance doit obéir au même réglage que le premier
+         * départ ; sans lui, elle consommerait des données mobiles, ce que le
+         * réglage promet d'éviter. La relance rejoint le lot d'origine : pas
+         * de nouvelle notification.
          */
         AsyncFunction("reprendre") { videoId: String, wifiUniquement: Boolean ->
             val contexte = appContext.reactContext ?: return@AsyncFunction
             val spec = suivi.values.firstOrNull { it.videoId == videoId } ?: return@AsyncFunction
-            suivi.entries.removeAll { it.value == spec }
             val dm = gestionnaire ?: return@AsyncFunction
             val destination = File(MediaStoreWriter.dossierPrive(contexte), spec.fichier)
+            // Le fichier est complet : inutile de le retransferer, il suffit de
+            // le publier. L'identifiant courant est conservé, donc le prochain
+            // balayage le verra comme terminé.
+            if (destination.exists() && destination.length() > 0L) {
+                val uri = MediaStoreWriter.publier(contexte, destination, spec.titre, spec.chaine, spec.album)
+                if (uri != null) {
+                    suivi.entries.firstOrNull { it.value.videoId == videoId }?.let {
+                        suivi[it.key] = it.value.copy(uri = uri)
+                    }
+                    sauver(contexte)
+                    publierNotifications(contexte)
+                }
+                return@AsyncFunction
+            }
+            suivi.entries.removeAll { it.value == spec }
             val requete = DownloadManager.Request(Uri.parse(spec.url)).apply {
                 setTitle(spec.titre)
                 setDescription(spec.chaine)
