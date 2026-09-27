@@ -30,9 +30,11 @@ import {
   binName,
   copyResolved,
   copyTree,
+  formatAttendu,
   isWindows,
   run,
   say,
+  verifierFormat,
 } from "./lib/build-env.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -129,31 +131,40 @@ const binOut = path.join(desktop, "bin");
 const runtimeOut = path.join(desktop, "runtime");
 
 const missing = [];
+// Le format est vérifié autant que la présence : un binaire présent mais de la
+// mauvaise plate-forme est pire qu'un binaire absent, parce qu'il donne
+// l'illusion d'un build complet. C'est exactement ce qui produisait un `.app`
+// macOS sans audio ni moteur d'IA, en silence.
 for (const tool of ["mpv", "ffmpeg", "ffprobe"]) {
   const file = path.join(binOut, binName(tool));
-  if (existsSync(file)) {
-    say(`  ✓ ${binName(tool)}`);
-  } else {
+  if (!existsSync(file)) {
     missing.push(binName(tool));
+    continue;
   }
+  if (!(await verifierFormat(file))) {
+    missing.push(`${binName(tool)} (mauvais format)`);
+    continue;
+  }
+  say(`  ✓ ${binName(tool)}`);
 }
 
 const llama = path.join(runtimeOut, binName("llama-server"));
-if (existsSync(llama)) {
-  say(`  ✓ ${binName("llama-server")}`);
-} else {
+if (!existsSync(llama)) {
   missing.push(binName("llama-server"));
+} else if (!(await verifierFormat(llama))) {
+  missing.push(`${binName("llama-server")} (mauvais format)`);
+} else {
+  say(`  ✓ ${binName("llama-server")}`);
 }
 
 if (missing.length > 0) {
   // C'est le garde-fou qui manquait : l'ancien script continuait, et
   // l'artefact partait sans lecteur audio ni moteur d'IA.
   console.error(
-    `\nPayload incomplet : ${missing.join(", ")} manquant(s).\n` +
-      "L'artefact qui en sortirait demarrerait sans audio et sans moteur " +
-      "d'IA. Lance `npm run fetch:bin` et `npm run fetch:llama` pour les " +
-      "recuperer, ouDefinissez NEUROBEATS_BIN_DIR / " +
-      "NEUROBEATS_LLAMA_SERVER.",
+    `\nPayload incomplet ou incompatible : ${missing.join(", ")}.\n` +
+      `La cible attend du ${formatAttendu()}. Des binaires de la machine ` +
+      "qui construit ne sont pas transposables : `npm run fetch:bin` et " +
+      "`npm run fetch:llama` doivent fournir ceux de la plate-forme cible.",
   );
   process.exit(1);
 }

@@ -255,6 +255,69 @@ async function existsAsync(target) {
   }
 }
 
+/**
+ * Format binaire attendu sur la plate-forme courante.
+ *
+ * C'est le garde-fou qui manquait : rien ne verifiait que les binaires
+ * embarques etaient de la meme plate-forme que la cible. Un build macOS
+ * produit sous Linux empaquetait alors des binaires Linux — un `.app` qui
+ * s'ouvrait sans audio ni moteur d'IA, sans que rien ne le signale.
+ */
+export function formatAttendu() {
+  if (isWindows) return "PE32";
+  if (isMac) return "Mach-O";
+  return "ELF";
+}
+
+/** Le format binaire reel d'un fichier, lu sur ses premiers octets. */
+export async function formatReel(file) {
+  let handle;
+  try {
+    handle = await fs.open(file, "r");
+  } catch {
+    return null;
+  }
+  try {
+    const buffer = Buffer.alloc(4);
+    const { bytesRead } = await handle.read(buffer, 0, 4, 0);
+    if (bytesRead < 4) return null;
+    // MZ (Windows) : le reste n'a pas besoin d'etre inspecte.
+    if (buffer[0] === 0x4d && buffer[1] === 0x5a) return "PE32";
+    // 0x7F 'E' 'L' 'F' (Linux et BSD)
+    if (
+      buffer[0] === 0x7f &&
+      buffer[1] === 0x45 &&
+      buffer[2] === 0x4c &&
+      buffer[3] === 0x46
+    ) {
+      return "ELF";
+    }
+    // Mach-O : 0xFEEDFACE / 0xFEEDFACF (32/64 bits, big/little endian)
+    if (buffer[0] === 0xfe && buffer[1] === 0xed) return "Mach-O";
+    if (buffer[0] === 0xcf && buffer[1] === 0xfa) return "Mach-O";
+    if (buffer[0] === 0xce && buffer[1] === 0xfa) return "Mach-O";
+    return "inconnu";
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Verifie qu'un binaire est bien de la plate-forme attendue.
+ *
+ * @returns {Promise<boolean>} true si le format correspond.
+ */
+export async function verifierFormat(file) {
+  const attendu = formatAttendu();
+  const reel = await formatReel(file);
+  if (reel === attendu) return true;
+  warn(
+    `  ✗ ${path.basename(file)} est ${reel ?? "illisible"}, ` +
+      `alors que la cible attend ${attendu}`,
+  );
+  return false;
+}
+
 /** Lance une commande, avec `shell` sous Windows (`npm` y est `npm.cmd`). */
 export function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {

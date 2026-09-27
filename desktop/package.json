@@ -17,7 +17,7 @@
     "fetch:bin": "node scripts/fetch-bin.mjs",
     "fetch:llama": "node scripts/fetch-llama.mjs",
     "stage": "node scripts/stage-runtime.mjs",
-    "package": "npm run build && npm run standalone && npm run fetch:llama && npm run stage && electron-builder --publish never",
+    "package": "npm run build && npm run standalone && npm run fetch:llama && npm run fetch:bin && npm run stage && electron-builder --publish never",
     "package:dir": "npm run build && npm run stage && electron-builder --dir --publish never"
   },
   "engines": {

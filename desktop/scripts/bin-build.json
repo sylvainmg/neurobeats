@@ -13,12 +13,36 @@
   "darwin-arm64": {
     "ffmpeg": null,
     "ffprobe": null,
-    "mpv": null
+    "mpv": {
+      "file": "mpv-arm64-0.40.0.tar.gz",
+      "url": "https://laboratory.stolendata.net/~djinn/mpv_osx/mpv-arm64-0.40.0.tar.gz",
+      "sha256": "3170fb709defebaba33e9755297d70dc3562220541de54fc3d494a8309ef1260",
+      "wholeDir": true,
+      "comment": "Source officielle pour macOS (djinn, mainteneur mpv, liee depuis mpv.io/installation). L'archive contient mpv.app/Contents/MacOS/mpv et 45 dylibs dans un sous-dossier lib/ ; toutes les dependances se resolvent par @executable_path/lib, donc le dossier se copie tel quel. Exige macOS 14+."
+    }
   },
   "darwin-x64": {
-    "ffmpeg": null,
-    "ffprobe": null,
-    "mpv": null
+    "ffmpeg": {
+      "file": "ffmpeg-x86_64.zip",
+      "url": "https://evermeet.cx/ffmpeg/getrelease/zip",
+      "sha256": "4acc0be580f9b2788029eb7bd4d645ff87968911b0a62aeeb3940d42d54558d5",
+      "wholeDir": false,
+      "comment": "Build statique Mach-O x86_64, sans dependance a resoudre."
+    },
+    "ffprobe": {
+      "file": "ffprobe-x86_64.zip",
+      "url": "https://evermeet.cx/ffprobe/getrelease/ffprobe/zip",
+      "sha256": "24a9c968cd4da72d99c7245e914b921815835eb6dff01d99868031aebaf1d439",
+      "wholeDir": false,
+      "comment": "L'URL evermeet.cx/ffprobe/getrelease/zip sert en realite ffmpeg : il faut /ffprobe/getrelease/ffprobe/zip."
+    },
+    "mpv": {
+      "file": "mpv-0.39.0.tar.gz",
+      "url": "https://laboratory.stolendata.net/~djinn/mpv_osx/mpv-0.39.0.tar.gz",
+      "sha256": "35ec81ad86a97b24956a8d0f4fa1ba2690b44ae7741c920e923620bcd7bd402a",
+      "wholeDir": true,
+      "comment": "Meme source que arm64, version x86_64 (0.39.0). 46 dylibs, toutes relatives."
+    }
   },
   "win32-x64": {
     "ffmpeg": {
