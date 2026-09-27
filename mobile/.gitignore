@@ -15,6 +15,7 @@ expo-env.d.ts
 build/
 *.orig.*
 *.jks
+*.keystore
 *.p8
 *.p12
 *.key
