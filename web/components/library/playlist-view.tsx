@@ -26,6 +26,7 @@ import {
 } from "@/components/library/transfer-dialog";
 import { TrackCover } from "@/components/track-cover";
 import { LocalFilter, correspond } from "@/components/library/local-filter";
+import { usePlayer } from "@/components/player/player-context";
 import { ApiError, api, type Track } from "@/lib/api";
 import { usePlaylists } from "@/lib/playlists";
 import { usePlaylistLocal } from "@/lib/use-playlist-local";
@@ -47,6 +48,11 @@ function formatDate(iso: string): string {
 /** Détail d'une playlist : lecture, renommage, ajout/retrait de titres, suppression. */
 export function PlaylistView({ playlistId }: { playlistId: string }) {
   const router = useRouter();
+  // L'état temps réel du lecteur, seul à savoir quel titre est réellement en
+  // cours : `pendingIndex` retombe à null dès que le son démarre, donc sans
+  // lui la ligne jouée perdrait tout marquage.
+  const { state: nowPlaying } = usePlayer();
+  const currentId = nowPlaying?.video_id ?? "";
   // Les titres viennent du store partagé : la vue est toujours alignée sur le
   // réel (modifications par l'UI, par l'assistant ou depuis un autre onglet).
   const {
@@ -521,7 +527,7 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
       ) : (
         <>
           {/* Filtre local, sur les titres déjà chargés : pas de réseau, donc
-              instantané même sur une longue playlist. Le compte reste based sur
+              instantané même sur une longue playlist. Le compte reste fondé sur
               `songs`, jamais sur la vue filtrée : « 12 sur 40 » décrit la
               playlist entière, pas l'affichage. */}
           <LocalFilter
@@ -549,22 +555,29 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
                 // titre filtré — et « Lecture » démarrerait le mauvais morceau.
                 const index = positionReelle.get(song.video_id) ?? indexAffiche;
                 const isPending = pendingIndex === index;
+                // Titre réellement en cours : suit l'état temps réel, donc le
+                // marquage reste juste même après un changement de source.
+                const isCurrent = currentId === song.video_id;
                 return (
                   <li
                     key={song.video_id}
-                    className="group hover:bg-surface-hover flex items-center gap-3 rounded-lg p-2"
+                    className={cn(
+                      "group flex items-center gap-3 rounded-lg p-2",
+                      isCurrent ? "bg-surface-hover" : "hover:bg-surface-hover",
+                    )}
                   >
                     <button
                       type="button"
                       onClick={() => void play(index)}
                       disabled={pendingIndex !== null}
                       aria-busy={isPending || undefined}
+                      aria-current={isCurrent ? "true" : undefined}
                       aria-label={
                         isPending
                           ? `Chargement de ${song.title}`
                           : `Lire ${song.title}`
                       }
-                      className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:cursor-wait"
+                      className="flex min-w-0 flex-1 items-start gap-3 text-left disabled:cursor-wait"
                     >
                       <span className="text-muted-foreground w-5 shrink-0 text-right text-xs tabular-nums">
                         {index + 1}
@@ -592,14 +605,45 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
                           />
                         </span>
                       </span>
-                      <span className="min-w-0 flex-1">
+                      {/* `justify-center` aligne le bloc de texte sur la hauteur
+                          entière de la pochette (40 px). Sans lui, ce bloc de
+                          36 px était centré sur les 40 px et débordait de
+                          2 px vers le haut : la pochette semblait alors plus
+                          basse que le texte qu'elle accompagne. */}
+                      <span className="flex min-w-0 flex-1 flex-col justify-center">
                         <span
                           className={cn(
-                            "block truncate text-sm font-medium",
-                            isPending && "text-primary",
+                            "flex items-center gap-1.5 truncate text-sm font-medium",
+                            (isCurrent || isPending) && "text-primary",
                           )}
                         >
-                          {song.title}
+                          <span className="truncate">{song.title}</span>
+                          {/* Barres battant à côté du titre : même repère que dans
+                              l'historique et la recherche, pour que « en cours »
+                              se lise pareil partout. La classe `nb-eq` porte
+                              déjà la keyframe et le repli `prefers-reduced-motion`. */}
+                          {isCurrent && !isPending && (
+                            <span
+                              className="flex h-3 shrink-0 items-end gap-px"
+                              aria-hidden="true"
+                            >
+                              {[
+                                { duree: "900ms", decalage: "0ms" },
+                                { duree: "1150ms", decalage: "180ms" },
+                                { duree: "780ms", decalage: "90ms" },
+                                { duree: "1020ms", decalage: "270ms" },
+                              ].map((barre) => (
+                                <span
+                                  key={barre.duree}
+                                  className="nb-eq bg-primary h-full w-px"
+                                  style={{
+                                    animationDuration: barre.duree,
+                                    animationDelay: barre.decalage,
+                                  }}
+                                />
+                              ))}
+                            </span>
+                          )}
                         </span>
                         <span className="text-muted-foreground block truncate text-xs">
                           {/* Le sous-titre bascule sur l'état, comme dans l'historique :
