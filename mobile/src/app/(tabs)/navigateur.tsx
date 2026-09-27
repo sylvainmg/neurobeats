@@ -795,7 +795,10 @@ const styles = StyleSheet.create({
   boutonAudioTexte: { ...typo.body, fontWeight: "800", color: "#04121f" },
 
   // --- Feuille ---
-  feuilleContenu: { marginHorizontal: -space.md },
+  // `flexShrink: 1` borne le contenu à la hauteur restante dans la feuille :
+  // sans elle, le ScrollView prend la taille de ses éléments (toutes les
+  // playlists) et la feuille déborde sous le clavier au lieu de remonter.
+  feuilleContenu: { marginHorizontal: -space.md, flexShrink: 1 },
   extraction: {
     alignItems: "center",
     paddingVertical: 48,

@@ -8,6 +8,7 @@ import {
   Easing,
   EasingFunction,
   type GestureResponderEvent,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -596,6 +597,20 @@ export function Feuille({
   // barre de gestes sur les appareils en navigation gestuelle (edge-to-edge).
   // Le garde Math.max conserve un coussin minimal si l'inset est nul.
   const insets = useSafeAreaInsets();
+  // Hauteur du clavier, lue sur l'événement. Sur Android la fenêtre de la
+  // modale ne se réduit pas (mesuré : 823 dp avant comme après), il faut donc
+  // remonter la feuille nous-mêmes — voir le commentaire plus bas.
+  const [clavier, setClavier] = useState(0);
+  useEffect(() => {
+    const montrer = Keyboard.addListener("keyboardDidShow", (e) =>
+      setClavier(e.endCoordinates?.height ?? 0),
+    );
+    const cacher = Keyboard.addListener("keyboardDidHide", () => setClavier(0));
+    return () => {
+      montrer.remove();
+      cacher.remove();
+    };
+  }, []);
   return (
     <Modal
       visible={visible}
@@ -610,29 +625,41 @@ export function Feuille({
       // (styles.xml), qui n'a pas besoin d'edge-to-edge.
       statusBarTranslucent
     >
-      {/* Clavier : la feuille doit remonter au-dessus de lui, sinon le champ
-          qui a le focus passe dessous (règle RN : KeyboardAvoidingView).
+      {/* Clavier : la feuille doit remonter au-dessus de lui.
 
-          iOS  → `padding` : le clavier flotte par-dessus, on réserve sa place.
-          ANDROID → RIEN (`behavior={undefined}`). La fenêtre de la modale est
-          déjà en ADJUST_RESIZE (posé par React Native) : le clavier réduit
-          directement la fenêtre, et la feuille, ancrée en bas, remonte toute
-          seule. Un `behavior="height"` s'y SUPERPOSE, et comme il écrit la
-          hauteur du layout à chaque événement clavier pendant que l'animation
-          `slide` du Modal joue, les deux se marchent dessus : la feuille
-          tremble, le texte saute, et l'ouverture paraît saccadée. Ne rien faire
-          est ici plus rapide et plus net que de lutter contre le clavier.
+          MESURÉ sur S23 (Android 16) : la fenêtre de la modale ne se réduit
+          PAS au clavier — sa hauteur reste à 823 dp avant comme après
+          `keyboardDidShow`, alors que le champ se retrouve à y=724, donc
+          à cheval sur le clavier qui commence vers 749. Le `adjustResize`
+          que React Native pose sur la fenêtre du Modal
+          (`ReactModalHostView.kt:332`) n'a donc d'effet sur rien ici, et
+          `KeyboardAvoidingView` avec `behavior={undefined}` n'est qu'un
+          conteneur : sans `behavior`, il ne compense rien.
 
-          `animationType="none"` + une `Animated` maison serait l'autre option,
-          mais elle coûte une valeur animée et un état de plus par feuille, pour
-          un résultat que le redimensionnement natif donne déjà. */}
+          On mesure donc la hauteur réelle du clavier à l'événement
+          `keyboardDidShow` (son `endCoordinates.height`) et on décale la
+          feuille de cette hauteur. `keyboardDidHide` remet le décalage à
+          zéro. Le geste est piloté par l'événement clavier — pas par le
+          focus, qui n'a lieu qu'une fois, ni par `onLayout`, qui ne se
+          déclenche qu'au changement de taille. */}
       <KeyboardAvoidingView
         style={styles.feuillePorte}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={0}
       >
         <Pressable style={styles.scrim} onPress={onFermer} accessibilityLabel="Fermer" />
-        <View style={[styles.feuille, { paddingBottom: Math.max(20, insets.bottom) }]}>
+        <View
+          style={[
+            styles.feuille,
+            {
+              paddingBottom: Math.max(20, insets.bottom),
+              // Le clavier ne réduit pas la fenêtre : on remonte donc la
+              // feuille de sa hauteur. Le voile est en `absoluteFill`, il
+              // couvre donc déjà la bande que la feuille libère en bas.
+              marginBottom: clavier,
+            },
+          ]}
+        >
           <View style={styles.poignee} />
           <View style={styles.feuilleTete}>
             <View style={styles.feuilleTextes}>
@@ -828,12 +855,28 @@ const styles = StyleSheet.create({
   etapeTexte: { fontSize: 13, lineHeight: 18, fontWeight: "500", color: colors.ink2, flex: 1 },
 
   // --- Feuille ---
-  // Le voile assombrit ce que la feuille recouvre : sans lui, une page web
-  // claire devient le fond de la modale. Le Pressable du même style reste :
-  // c'est lui qui referme la feuille au tap à côté.
-  scrim: { flex: 1, backgroundColor: colors.voileModale },
-  feuillePorte: { flex: 1 },
+  // Le voile assombrit tout ce que la feuille ne recouvre pas : sans lui, une
+  // page web claire (YouTube) devient le fond de la modale.
+  //
+  // Il est en `absoluteFill`, comme le scrim de `dialog.tsx`, et non en frère
+  // `flex: 1` de la feuille : en frère, il n'occupe que la place laissée par la
+  // feuille dans le flux, et une feuille plus haute que la fenêtre (clavier,
+  // nom de playlist très long) le laisse plus court qu'elle — la bande
+  // restante affiche alors le fond blanc de la fenêtre native. En absolu, le
+  // voile couvre toujours la fenêtre entière, quelle que soit la hauteur.
+  //
+  // C'est `feuillePorte` qui ancre la feuille EN BAS (`justifyContent: flex-end`)
+  // : le voile absolu ne participe plus au flux, donc sans cette ancre la
+  // feuille se colle en haut de l'écran. Le Pressable reste : c'est lui qui
+  // referme la feuille au tap à côté.
+  scrim: { ...StyleSheet.absoluteFill, backgroundColor: colors.voileModale },
+  feuillePorte: { flex: 1, justifyContent: "flex-end", backgroundColor: colors.voileModale },
   feuille: {
+    // Permet à la feuille de rapetisser si son contenu est plus haut que la
+    // place disponible. Elle ne remonte pas POUR CAUSE au clavier : la
+    // fenêtre de la modale ne se réduit pas (mesuré), c'est le `marginBottom`
+    // posé plus haut d'après `keyboardDidShow` qui la fait monter.
+    flexShrink: 1,
     backgroundColor: colors.surface,
     borderTopLeftRadius: radius.lg,
     borderTopRightRadius: radius.lg,
