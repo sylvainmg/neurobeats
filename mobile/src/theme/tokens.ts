@@ -43,8 +43,16 @@ export const colors = {
    * une page web claire occupe alors tout l'écran et la feuille semble posée
    * sur rien. Franc plutôt que léger : un voile à 30 % sur du blanc se lit
    * comme un gris délavé, pas comme un fond sombre.
+   *
+   * 0.65 n'y suffisait pas. Le voile étant translucide, il se compose par
+   *-dessus la page : sur le blanc de YouTube il rendait (95,96,100) — un gris
+   * clair délavé, mesuré sur l'appareil — et la feuille flottait encore sur une
+   * page claire. À 0.85 le même blanc tombe à (46,46,48) : un voile sombre
+   * franc. Le fond reste translucide, sinon on perdrait le repère de la page
+   * en dessous, mais il ne laisse plus assez de blanc pour se lire comme du
+   * papier.
    */
-  voileModale: "rgba(8,11,15,0.65)",
+  voileModale: "rgba(8,11,15,0.85)",
   /** Fond des boutons fantômes et des pastilles neutres. */
   voileClair: "rgba(255,255,255,0.06)",
   ok: "#2ed9a8",
