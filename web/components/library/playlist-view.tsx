@@ -246,7 +246,11 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
       {/* Retour à la bibliothèque : cet écran est atteint depuis la grille/sidebar. */}
       <BackButton href="/library" />
 
-      <header className="flex flex-col gap-6 sm:flex-row sm:items-end">
+      {/* La pochette est centrée sur le bloc de texte : `items-end` la
+          descendait sous les boutons, `items-start` la collait en haut sans
+          repère. `items-center` la laisse au milieu, entre le titre et la
+          rangée d'actions. */}
+      <header className="flex flex-col gap-6 sm:flex-row sm:items-center">
         <span className="relative block aspect-square w-40 shrink-0 overflow-hidden rounded-lg">
           {cover ? (
             <TrackCover
@@ -562,11 +566,7 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
                   <li
                     key={song.video_id}
                     className={cn(
-                      // `items-start` porte sur le <li> : c'est lui qui
-                      // aligne ses enfants. Le <button> étant `flex-1`, un
-                      // alignement posé plus bas n'aurait aucun effet — la
-                      // pochette restait centrée sur la ligne.
-                      "group flex items-start gap-3 rounded-lg p-2",
+                      "group flex items-center gap-3 rounded-lg p-2",
                       isCurrent ? "bg-surface-hover" : "hover:bg-surface-hover",
                     )}
                   >
@@ -586,7 +586,13 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
                       <span className="text-muted-foreground w-5 shrink-0 text-right text-xs tabular-nums">
                         {index + 1}
                       </span>
-                      <span className="relative size-10 shrink-0">
+                      {/* `block` obligatoire : sans lui ce <span> reste en
+                          `inline`, sa hauteur suit la ligne et non
+                          `size-10` — la pochette, positionnée en absolu,
+                          descendait alors sous le texte. La recherche
+                          (search/page.tsx) et l'historique le font
+                          pareil. */}
+                      <span className="relative block size-10 shrink-0">
                         <TrackCover
                           videoId={song.video_id}
                           title={song.title}
