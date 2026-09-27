@@ -137,11 +137,10 @@ jobs:
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
         run: |
-          test -n "$KEYSTORE_B64" || {
-            echo "::warning::ANDROID_KEYSTORE_B64 absent — build signe avec la cle de debug (non publiable)"
-            echo "signed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          }
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::ANDROID_KEYSTORE_B64 absent. Configure le secret avec la cle de distribution (gh secret set ANDROID_KEYSTORE_B64 < cle.b64). Sans elle, l'APK serait signe en cle de debug, donc non publiable."
+            exit 1
+          fi
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           echo "signed=true" >> "$GITHUB_OUTPUT"
           echo "path=$RUNNER_TEMP/release.keystore" >> "$GITHUB_OUTPUT"
@@ -149,6 +148,7 @@ jobs:
       - name: Construire l'APK
         working-directory: mobile
         env:
+          NEUROBEATS_REQUIRE_RELEASE_SIGNING: "1"
           ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
