@@ -1,0 +1,24 @@
+{
+  "_comment": "Runtime Python autonome du backend. Sommes relevees sur les assets publies le 2026-09-27 (aucun fichier .sha256 n'est publie en amont, elles sont donc calculees localement sur le telechargement). L'execution precedente utilisait 3.13.2 (cf. AGENTS.md) ; passage a 3.13.15 pour disposer des memes binaires sur les quatre plate-formes. Les wheels requirements-desktop sont compatibles 3.13.x, donc rien d'autre ne change.",
+  "version": "3.13.15",
+  "tag": "20260924",
+  "base": "https://github.com/astral-sh/python-build-standalone/releases/download/20260924",
+  "assets": {
+    "linux-x64": {
+      "file": "cpython-3.13.15+20260924-x86_64-unknown-linux-gnu-install_only.tar.gz",
+      "sha256": "c20e1ff8600a0241849588b36948942eaccdc80da34df69674f3784a687197de"
+    },
+    "darwin-arm64": {
+      "file": "cpython-3.13.15+20260924-aarch64-apple-darwin-install_only.tar.gz",
+      "sha256": "a18e1d1b6067d39cf7b2b605fdb78ad6b8a3aed221c44ef934d399dccf355453"
+    },
+    "darwin-x64": {
+      "file": "cpython-3.13.15+20260924-x86_64-apple-darwin-install_only.tar.gz",
+      "sha256": null
+    },
+    "win32-x64": {
+      "file": "cpython-3.13.15+20260924-x86_64-pc-windows-msvc-install_only.tar.gz",
+      "sha256": "cc5e5a61adbe02ae93e01a90c4b0718cc119d86cb6fa855441ff5c606b6dd6f4"
+    }
+  }
+}

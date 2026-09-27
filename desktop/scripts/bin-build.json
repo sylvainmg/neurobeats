@@ -1,0 +1,46 @@
+{
+  "_comment": "Binaires multimedia du lecteur. Sur Linux et macOS, aucune entree : les binaires viennent du systeme (donc `null`, et fetch-bin.mjs les cherche dans le PATH). Windows telechope des builds explicites, parce qu'un runner CI n'a pas de /usr/bin/mpv. Sommes relevees le 2026-09-27. `wholeDir: true` pour mpv : le build embarque mpv.com, mpv.exe, d3dcompiler_43.dll et les polices, et tout copier est plus sur que d'extraire deux fichiers.",
+  "linux-x64": {
+    "ffmpeg": null,
+    "ffprobe": null,
+    "mpv": null
+  },
+  "linux-arm64": {
+    "ffmpeg": null,
+    "ffprobe": null,
+    "mpv": null
+  },
+  "darwin-arm64": {
+    "ffmpeg": null,
+    "ffprobe": null,
+    "mpv": null
+  },
+  "darwin-x64": {
+    "ffmpeg": null,
+    "ffprobe": null,
+    "mpv": null
+  },
+  "win32-x64": {
+    "ffmpeg": {
+      "file": "ffmpeg-n8.1-latest-win64-gpl-8.1.zip",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip",
+      "sha256": "0157dfb95cff86d6cce0e6678e8037ba537e3b7b38f1d801cb5852870ad1bc10",
+      "wholeDir": false,
+      "comment": "Build statique : ffmpeg.exe et ffprobe.exe sont autonomes, sans DLL a cote. Les builds `*-shared-*` sont volontairement exclus."
+    },
+    "ffprobe": {
+      "file": "ffmpeg-n8.1-latest-win64-gpl-8.1.zip",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip",
+      "sha256": "0157dfb95cff86d6cce0e6678e8037ba537e3b7b38f1d801cb5852870ad1bc10",
+      "wholeDir": false,
+      "comment": "Meme archive que ffmpeg : les deux binaires sont dans bin/."
+    },
+    "mpv": {
+      "file": "mpv-x86_64-20260927-git-a1bf4b6559.7z",
+      "url": "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20260927/mpv-x86_64-20260927-git-a1bf4b6559.7z",
+      "sha256": "04852d5e37730dfa74dec8f88d7cc80b8f756beb52c354c0a3753d3eb2c030e4",
+      "wholeDir": true,
+      "comment": "Format 7z : Node ne le lit pas, le script passe par 7-Zip (preinstalle sur le runner windows). Le dossier contient mpv.com (sous-systeme console : le backend lit stdout via --msg-level=all=status), mpv.exe et d3dcompiler_43.dll."
+    }
+  }
+}

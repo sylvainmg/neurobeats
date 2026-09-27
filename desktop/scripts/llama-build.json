@@ -1,0 +1,42 @@
+{
+  "_comment": "Binaires llama.cpp du moteur local. Sommes relevees le 2026-09-27 sur les assets publies (llama.cpp ne publie pas de fichier .sha256 en amont). La valeur linux-x64 correspond a celle deja epinglee dans l'ancien fetch-llama.sh, ce qui confirme la releve. Windows utilise le build VULKAN, comme Linux : le CPU reste embarque en repli.",
+  "build": "b11177",
+  "base": "https://github.com/ggml-org/llama.cpp/releases/download/b11177",
+  "assets": {
+    "linux-x64": {
+      "b11177": {
+        "file": "llama-b11177-bin-ubuntu-vulkan-x64.tar.gz",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11177/llama-b11177-bin-ubuntu-vulkan-x64.tar.gz",
+        "sha256": "1557dbc00d446cb21d7e9771d98106495f55d8cef4faff85ee479eef3698d0c3"
+      }
+    },
+    "linux-arm64": {
+      "b11177": {
+        "file": "llama-b11177-bin-ubuntu-arm64.tar.gz",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11177/llama-b11177-bin-ubuntu-arm64.tar.gz",
+        "sha256": null
+      }
+    },
+    "darwin-arm64": {
+      "b11177": {
+        "file": "llama-b11177-bin-macos-arm64.tar.gz",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11177/llama-b11177-bin-macos-arm64.tar.gz",
+        "sha256": "815f8f3ddc8f57ceb792fed561bd6a6c6bd590578f3ad38604e7f70c49de1ac1"
+      }
+    },
+    "darwin-x64": {
+      "b11177": {
+        "file": "llama-b11177-bin-macos-x64.tar.gz",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11177/llama-b11177-bin-macos-x64.tar.gz",
+        "sha256": "47469443f622dbcf13a4cdb484c0e82e8194ca4da5a73e82952b26b9337c6a0c"
+      }
+    },
+    "win32-x64": {
+      "b11177": {
+        "file": "llama-b11177-bin-win-vulkan-x64.zip",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11177/llama-b11177-bin-win-vulkan-x64.zip",
+        "sha256": "6e4e7a8cea0d2dbd0a745b55f6b42d46d8130f8df4791938802f8269dfc205d5"
+      }
+    }
+  }
+}

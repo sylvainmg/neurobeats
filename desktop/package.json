@@ -12,11 +12,16 @@
     "build": "npm run icon && npm run clean && tsc && npm run build:preload",
     "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --format=cjs --target=chrome130 --external:electron --sourcemap --outfile=dist/preload/index.js",
     "start": "npm run build && electron .",
-    "standalone": "bash scripts/sync-web.sh",
-    "fetch:llama": "bash scripts/fetch-llama.sh",
-    "stage": "bash scripts/stage-runtime.sh",
-    "package": "npm run build && npm run standalone && npm run stage && electron-builder --publish never",
+    "standalone": "node scripts/sync-web.mjs",
+    "fetch:python": "node scripts/fetch-python.mjs",
+    "fetch:bin": "node scripts/fetch-bin.mjs",
+    "fetch:llama": "node scripts/fetch-llama.mjs",
+    "stage": "node scripts/stage-runtime.mjs",
+    "package": "npm run build && npm run standalone && npm run fetch:llama && npm run stage && electron-builder --publish never",
     "package:dir": "npm run build && npm run stage && electron-builder --dir --publish never"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   },
   "build": {
     "appId": "com.neurobeats.desktop",
@@ -76,6 +81,7 @@
     }
   },
   "devDependencies": {
+    "@electron-internal/extract-zip": "^1.0.5",
     "@types/node": "^26.6.2",
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
