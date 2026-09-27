@@ -562,7 +562,11 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
                   <li
                     key={song.video_id}
                     className={cn(
-                      "group flex items-center gap-3 rounded-lg p-2",
+                      // `items-start` porte sur le <li> : c'est lui qui
+                      // aligne ses enfants. Le <button> étant `flex-1`, un
+                      // alignement posé plus bas n'aurait aucun effet — la
+                      // pochette restait centrée sur la ligne.
+                      "group flex items-start gap-3 rounded-lg p-2",
                       isCurrent ? "bg-surface-hover" : "hover:bg-surface-hover",
                     )}
                   >
@@ -577,7 +581,7 @@ export function PlaylistView({ playlistId }: { playlistId: string }) {
                           ? `Chargement de ${song.title}`
                           : `Lire ${song.title}`
                       }
-                      className="flex min-w-0 flex-1 items-start gap-3 text-left disabled:cursor-wait"
+                      className="flex min-w-0 flex-1 gap-3 text-left disabled:cursor-wait"
                     >
                       <span className="text-muted-foreground w-5 shrink-0 text-right text-xs tabular-nums">
                         {index + 1}
