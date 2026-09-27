@@ -466,6 +466,14 @@ export class Gestionnaire {
         // Depuis yt-dlp 2026.08.19 les clients par défaut (visionos /
         // web_embedded) ne renvoient plus d'URL mortes : on ne force plus aucun
         // player_client (forcer android exigerait un PoToken GVS, cf §59).
+        //
+        // Le dossier demandé n'est pas un chemin libre : le moteur le résout
+        // par `File(baseDir, nom)` sous son propre stockage externe
+        // (`…/files/yt-dlp/`), si bien qu'une URI absolue y deviendrait un nom
+        // de dossier littéral (`file:___data_user_0_…`). On ne demande qu'un
+        // nom simple. Le chemin réel du fichier arrive ensuite dans
+        // `completed`, via `path` (absolu) et `filename` — voir
+        // `YtDlpTask.completedPayload`.
         output: {
           directory: "transfert",
           filename: "%(id)s - %(title)s.%(ext)s",
@@ -546,29 +554,35 @@ export class Gestionnaire {
    * `recupererLesDirects`). L'utilisateur n'a pas à tout retélécharger.
    */
   private async accueillirFichier(spec: Spec, resultat: DownloadResult) {
+    const nom = resultat.filename ?? spec.fichier;
     try {
       assurerDossier(DOSSIER_TRANSFERT);
-      // Le moteur annonce tantôt une URI encodée (`Uri.fromFile`), tantôt un
-      // chemin brut selon la version du module : on essaie les deux.
-      const source = this.trouverSourceDirecte(resultat.uri, resultat.path);
+      const source = this.trouverSourceDirecte(
+        resultat.path,
+        resultat.uri,
+        resultat.path ? `${resultat.path}/${nom}` : undefined,
+        fichierTransfert(nom).uri,
+      );
       if (!source) {
         throw new Error("Le fichier téléchargé est introuvable.");
       }
-      const destination = fichierTransfert(resultat.filename ?? spec.fichier);
+      const destination = fichierTransfert(nom);
       await this.rapatrier(source, destination);
       this.acheverDirect(spec.videoId, destination, resultat.size);
       oublierDirectPerdu(spec.videoId);
     } catch (erreur) {
-      // Un fichier achevé resté dehors est récupérable : on mémorise ses
-      // chemins pour le rapatrier à la reprise plutôt que de le retélécharger.
-      const chemin = resultat.uri ?? resultat.path;
-      if (chemin) {
+      // Un fichier achevé resté dehors est récupérable : on mémorise son
+      // chemin pour le rapatrier à la reprise plutôt que de le retélécharger.
+      // On note le dossier réel du moteur (celui qu'il a rendu), complété du
+      // nom du fichier : c'est là que l'audio se trouve. Sans ce dossier,
+      // il n'y a rien à retrouver et l'on ne mémorise rien.
+      const source = resultat.uri ?? (resultat.path ? `${resultat.path}/${nom}` : undefined);
+      if (source) {
         memoriserDirectPerdu({
           videoId: spec.videoId,
-          source: chemin,
-          rechange:
-            resultat.path && resultat.path !== chemin ? resultat.path : undefined,
-          fichier: resultat.filename ?? spec.fichier,
+          source,
+          rechange: resultat.path && resultat.path !== resultat.uri ? resultat.path : undefined,
+          fichier: nom,
           taille: resultat.size,
         });
       }
@@ -585,11 +599,20 @@ export class Gestionnaire {
   private trouverSourceDirecte(...chemins: (string | undefined)[]): File | null {
     for (const chemin of chemins) {
       if (!chemin) continue;
-      try {
-        const candidat = new File(chemin);
-        if (candidat.exists && tailleDe(candidat) > 0) return candidat;
-      } catch {
-        // un chemin illisible n'est simplement pas une source
+      // Le moteur rend un chemin ABSOLU (`…/files/yt-dlp/transfert/x.m4a`),
+      // alors que le constructeur de `File` attend une URI
+      // (`File(URI.create(uri))` dans expo-file-system) : un chemin nu est
+      // rejeté. Pire, un titre YouTube contient couramment des caractères
+      // interdits dans une URI — `🔞`, `@`, espaces multiples — et l'échec
+      // se lisait ensuite comme un fichier absent, l'exception étant avalée.
+      // D'où la seconde tentative en `file://`, qui passe.
+      for (const essai of [chemin, `file://${chemin}`]) {
+        try {
+          const candidat = new File(essai);
+          if (candidat.exists && tailleDe(candidat) > 0) return candidat;
+        } catch {
+          // un chemin illisible n'est simplement pas une source
+        }
       }
     }
     return null;
