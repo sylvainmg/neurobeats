@@ -273,7 +273,50 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   // `preventDefault` est indispensable : sans lui, un bouton resté focus (après
   // un clic) serait activé en plus du raccourci, soit deux actions pour une
   // frappe. C'est aussi ce qui empêche la page de défiler sur ← / →.
+  //
+  // Une flèche **maintenue** répète le saut, comme dans un lecteur vidéo. Avant,
+  // `event.repeat` était filtré : la touche ne servait qu'à un saut de 5 s, quel
+  // que soit le temps de maintien — c'est le comportement que tu as signalé.
+  //
+  // Le saut ne peut pas repasser par `seekBy` tel quel. `seekBy` calcule la cible
+  // depuis `state.position`, or cette position n'est lue du serveur qu'APRÈS
+  // l'appel : tous les événements de répétition partiraient donc de la même
+  // valeur, et la lecture n'avancerait que d'un cran. On fige donc la position au
+  // premier appui, on additionne le delta à chaque répétition, et on n'envoie
+  // qu'une requête à la fois pour ne pas empiler les appels sur le réseau.
+  // Cible de la série en cours quand une flèche est maintenue, `null` sinon.
+  // Déclaré ici et non dans l'effet : un `useRef` dans le callback d'un effet
+  // viole la règle des hooks, et le ref doit survivre aux remontages d'effet.
+  const repetition = useRef<{ cible: number; enCours: boolean } | null>(null);
+
   useEffect(() => {
+    async function repeter(direction: -1 | 1) {
+      const depart = repetition.current;
+      // Le `keyup` a déjà armé le vide : le `blur` de la fenêtre, ou une
+      // relâche intervenue entre deux événements de répétition. Reprendre la
+      // dernière cible connue reste correct — la série reprend où elle s'était
+      // arrêtée, et sans cela un `repetition.current` nul ferait planter la
+      // répétition suivante sur une propriété d'un objet absent.
+      if (!depart) return;
+      // Une requête déjà en vol : on saute ce cycle plutôt que d'en empiler une.
+      // Le cycle suivant, ou le `keyup`, reprendra la série à la position
+      // atteinte — c'est la cible locale qui fait foi entre deux requêtes.
+      if (depart.enCours) return;
+      const duration = state?.duration ?? 0;
+      const brut = depart.cible + direction * SEEK_STEP_SECONDS;
+      depart.cible = Math.max(duration > 0 ? Math.min(brut, duration) : brut, 0);
+      depart.enCours = true;
+      try {
+        await api.seek(depart.cible);
+        await refresh();
+      } catch {
+        // Une série s'interrompt d'elle-même à la frappe suivante : `run` affiche
+        // l'erreur de la frappe précédente, inutile d'en empiler une seconde.
+      } finally {
+        depart.enCours = false;
+      }
+    }
+
     function onKeyDown(event: KeyboardEvent) {
       const delta =
         event.key === "ArrowLeft" ? -SEEK_STEP_SECONDS
@@ -281,18 +324,53 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         : 0;
       const isSpace = event.code === "Space" || event.key === " ";
       if (delta === 0 && !isSpace) return;
-      if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+      // `event.repeat` n'est filtré que pour l'espace : sur une barre d'espace,
+      // la répétition du clavier imposerait une cadence de lecture/pause que
+      // personne n'a demandée. Sur une flèche, c'est le maintien voulu.
+      if (event.repeat && isSpace) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (isTextEntry(event.target)) return;
       // Un curseur focalisé garde ses flèches (Radix fait déjà son pas) : sinon
       // une flèche déclencherait son pas ET le saut global.
       if (delta !== 0 && isRangeControl(event.target)) return;
       event.preventDefault();
-      if (delta !== 0) void seekBy(delta);
-      else void togglePause();
+      if (delta === 0) {
+        void togglePause();
+        return;
+      }
+      if (!event.repeat) {
+        // Premier appui : on fige la cible de départ. Sans cela, chaque
+        // répétition repartirait de `state.position`, qui n'est relu du serveur
+        // qu'après l'appel — tous les pas viseraient donc la même position.
+        const position = state?.position ?? 0;
+        repetition.current = { cible: position, enCours: false };
+        void seekBy(delta);
+        return;
+      }
+      void repeter(delta > 0 ? 1 : -1);
     }
+
+    function onKeyUp(event: KeyboardEvent) {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      repetition.current = null;
+    }
+
+    // Une fenêtre qui perd le focus ne livre plus les événements clavier, et le
+    // `keyup` de relâchement ne peut pas davantage arriver : sans ce filet, la
+    // série resterait armée et la prochaine flèche repartirait de loin.
+    const onBlur = () => {
+      repetition.current = null;
+    };
+
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [togglePause, seekBy]);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [togglePause, seekBy, refresh, state?.position, state?.duration]);
 
   return (
     <PlayerContext.Provider
