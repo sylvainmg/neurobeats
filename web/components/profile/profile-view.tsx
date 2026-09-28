@@ -7,6 +7,8 @@ import {
   ChevronRight,
   Clock,
   Database,
+  ExternalLink,
+  Globe,
   History,
   Music2,
   Pencil,
@@ -34,6 +36,11 @@ import { TasteAssistant } from "@/components/profile/taste-assistant";
 import { api } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { cn } from "cn";
+
+// Adresse du site du projet. Declarée ici plutôt que écrite en dur dans le
+// JSX : la même valeur sert au lien affiché et à son libellé pour lecteur
+// d'écran, et les deux doivent dire la même chose.
+const SITE_WEB = "https://neurobeats.site";
 
 // Onglets du profil : une seule section affichee a la fois, pour aerer.
 const TABS = [
@@ -748,6 +755,50 @@ export function ProfileView() {
                   <Trash2 className="size-3.5" />
                   Vider les caches
                 </Button>
+              </div>
+            </section>
+
+            {/* Adresse du site, dans l'onglet Donnees et non dans un nouvel
+                onglet : quatre onglets suffisent deja, et l'information porte
+                sur le reseau et la vie privee — les deux sujets de cet onglet.
+                `target="_blank"` ouvre un onglet, `noopener` empeche la page
+                d'acceder a la fenetre qui l'a ouverte. */}
+            <section aria-labelledby="data-website-title" className="space-y-4">
+              <SectionHeading
+                id="data-website-title"
+                icon={Globe}
+                label="Site du projet"
+                hint="Documentation, versions, code source"
+              />
+
+              <div className="bg-surface border-border flex flex-col gap-4 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <span className="bg-background/60 text-muted-foreground grid size-9 shrink-0 place-items-center rounded-lg">
+                    <Globe className="size-4" aria-hidden="true" />
+                  </span>
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-semibold">
+                      {new URL(SITE_WEB).host}
+                    </h3>
+                    <p className="text-muted-foreground text-xs">
+                      L&apos;adresse du projet, sa documentation et son code
+                      source. Ce que l&apos;application envoie sur le reseau y
+                      est detaille, requete par requete.
+                    </p>
+                  </div>
+                </div>
+                <a
+                  href={SITE_WEB}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="border-border hover:border-accent hover:text-accent inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-xs font-medium transition-colors"
+                >
+                  Ouvrir
+                  <ExternalLink className="size-3.5" aria-hidden="true" />
+                  <span className="sr-only">
+                    {new URL(SITE_WEB).host}, dans un nouvel onglet
+                  </span>
+                </a>
               </div>
             </section>
           </div>
