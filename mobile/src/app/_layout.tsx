@@ -14,6 +14,8 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
 import { libererSiInactif, preparerLecteur } from "@/playback/lecteur";
 import { gestionnaire, useApp } from "@/state/app";
+import { BandeauMiseAJour } from "@/update/bandeau";
+import { controler } from "@/update/service";
 import { colors } from "@/theme/tokens";
 
 export default function Racine() {
@@ -22,6 +24,9 @@ export default function Racine() {
   useEffect(() => {
     void initialiser();
     void preparerLecteur();
+    // Verification de version en tache de fond : la cadence (24 h) est geree
+    // par le service, qui peut donc etre appele sans danger a chaque demarrage.
+    void controler();
     // La barre de navigation native reste sombre, thème système clair ou non :
     // l'app est en thème sombre, OneUI la peindrait en blanc sinon. « light »
     // = icônes claires sur barre sombre (même contrat visuel que Spotify, qui
@@ -73,6 +78,7 @@ export default function Racine() {
           />
           <Stack.Screen name="player" options={{ animation: "slide_from_bottom" }} />
         </Stack>
+        <BandeauMiseAJour />
       </SafeAreaView>
     </SafeAreaProvider>
   );

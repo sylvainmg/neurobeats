@@ -46,7 +46,10 @@ export default function Reglages() {
   );
 
   const sansFichier = Math.max(0, bilan.titres - bilan.chez_toi);
-  const version = Constants.expoConfig?.version ?? "0.1";
+  // Repli volontairement absent de version en dur : une valeur figee
+  // deviendrait fausse a chaque changement de version, et l'afficherait sans
+  // qu'on le remarque. « Inconnue » se voit ; « 0.1 » passerait pour vrai.
+  const version = Constants.expoConfig?.version ?? "inconnue";
 
   return (
     <View style={styles.porte}>

@@ -36,6 +36,15 @@ import { initLogging, logError, logLine, logPath } from "./logging";
 import { isPortInUse } from "./ports";
 import { closeSplash, createSplash, splashProgress } from "./splash";
 import { createTray, destroyTray } from "./tray";
+import {
+  controler,
+  demarrerServiceUpdate,
+  etatCourant,
+  ignorer,
+  reporter,
+  surChangement,
+  telechargerEtInstaller,
+} from "./update";
 
 // Identité et isolation de l'instance : le userData est choisi avant le lock
 // single-instance pour que l'AppImage et l'Electron de développement ne se
@@ -477,6 +486,12 @@ async function boot(): Promise<void> {
   splashProgress(100, "Prêt");
   showMain();
   setTimeout(closeSplash, 450);
+
+  // Le contrôle de version part APRÈS l'affichage : il interroge le backend
+  // pour savoir si une piste joue, et la fenêtre doit exister pour recevoir la
+  // décision. Il est volontairement le dernier geste du démarrage — un joueur
+  // musical ne doit pas retarder son premier son pour une question de version.
+  demarrerServiceUpdate();
 }
 
 // ------------------------------------------------------------------- lifecycle
@@ -500,8 +515,7 @@ if (!gotLock) {
     }
 
     // Pont pour le préload / l'UI desktop locale.
-    ipcMain.handle("desktop:info", () => ({
-      isDev: isDev(),
+    ipcMain.handle("desktop:info", () => ({      isDev: isDev(),
       apiUrl: `http://127.0.0.1:${backendPort()}`,
       backendPort: backendPort(),
       frontendPort: frontendPort(),
@@ -512,6 +526,21 @@ if (!gotLock) {
       platform: process.platform,
       versions: { ...process.versions } as Record<string, string>,
     }));
+
+    // Vérificateur de mise à jour : l'état courant, un contrôle manuel, les deux
+    // réponses possibles (« plus tard » / « ignorer ») et l'installation. Voir
+    // shared/update/README.md — la règle de bruit est décidée dans le module
+    // partagé, pas ici.
+    surChangement((etat) => {
+      for (const w of BrowserWindow.getAllWindows()) {
+        w.webContents.send("desktop:update", etat);
+      }
+    });
+    ipcMain.handle("desktop:update-etat", () => etatCourant());
+    ipcMain.handle("desktop:update-controler", () => controler(true));
+    ipcMain.handle("desktop:update-reporter", () => reporter());
+    ipcMain.handle("desktop:update-ignorer", () => ignorer());
+    ipcMain.handle("desktop:update-installer", () => telechargerEtInstaller());
 
     createTray({
       show: showMain,

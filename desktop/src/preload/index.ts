@@ -3,8 +3,10 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 import { installProfileModelsPanel } from "./profile-models";
+import { installUpdateBadge } from "./update-badge";
 
 installProfileModelsPanel();
+installUpdateBadge();
 
 contextBridge.exposeInMainWorld("desktopAPI", {
   /** Infos d'environnement de l'app desktop (résolues côté main). */

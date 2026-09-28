@@ -747,23 +747,37 @@ export class Gestionnaire {
   }
 
   /**
-   * Un échec 403/réseau signale souvent un yt-dlp embarqué périmé : on propose
-   * en arrière-plan la dernière version PyPI. Sans effet si déjà à jour ;
-   * l'échec de l'update est silencieux (le runtime embarqué reste en place).
+   * Un echec 403/reseau signalait autrefois un yt-dlp embarque perime, et on
+   * proposait la derniere version PyPI en arriere-plan.
+   *
+   * Ce chemin est retire, et il ne doit pas etre reintroduit en lisant
+   * AGENTS.md §59 — qui decrit une mise a jour en place qui n'a jamais existe
+   * dans le code. Trois raisons, verifiees :
+   *
+   * 1. `YtDlp.updateYtDlp()` n'existe pas. Ni dans la facade JavaScript, ni
+   *    dans ses types, ni parmi les `AsyncFunction` du module Kotlin. L'appel
+   *    levait donc un `TypeError` **synchrone**, que le `.catch()` de la
+   *    promesse ne peut pas attraper : il remonte dans `echouerTransfert` et
+   *    empeche la ligne suivante, `relancerDirect`, de s'executer. Autrement
+   *    dit, ce code ne mettait pas a jour yt-dlp, il desactivait la relance
+   *    automatique des pannes transitoires — exactement le cas qu'il visait.
+   * 2. Meme cable, il n'aurait rien fait. Le binaire embarque expose
+   *    `updateYtDlp(context, callback)`, et son implementation appelle
+   *    immediatement `onError("In-app yt-dlp update not supported")` : la mise
+   *    a jour a chaud n'est pas supportee par le runtime.
+   * 3. Le runtime est donc epingle, et c'est le seul comportement honnete :
+   *    yt-dlp evolue avec l'application, dont la version est verifiee contre
+   *    le manifeste publie. Le cout est qu'un YouTube qui change peut
+   *    momentanement casser les telechargements directs — d'ou la relance
+   *    automatique, qui est le vrai remede et qui fonctionne desormais.
+   *
+   * La relance automatique n'a pas bouge : `relancerDirect` decide seul, via
+   * `estPanneTransitoire`.
    */
-  private siSourceStale(erreur: unknown) {
-    if (!(erreur instanceof YtDlpError) || erreur.code !== "NETWORK_ERROR") return;
-    YtDlp.updateYtDlp()
-      .then((resultat) => {
-        if (resultat.action === "updated") {
-          console.warn(
-            `[updater] yt-dlp activé en version ${resultat.version}, la source sera réessayée`,
-          );
-        }
-      })
-      .catch(() => {
-        console.warn("[updater] indisponible (réseau ou PyPI) : runtime embarqué conservé");
-      });
+  private siSourceStale(_erreur: unknown) {
+    // Volontairement vide : voir le commentaire ci-dessus. La methode est
+    // conservee pour que l'appel dans `echouerTransfert` reste lisible et que
+    // la raison du silence soit documentee a cote.
   }
 
   async rafraichir() {
