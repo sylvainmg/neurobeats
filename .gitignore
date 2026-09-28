@@ -16,3 +16,25 @@ landing/
 
 # Journaux de serveur locaux (backend lance a la main ou via dev.sh)
 backend/*.log
+
+# Dependances et builds JavaScript. Chaque paquetage (web, site, mobile,
+# desktop) a son propre .gitignore ; ces lignes couvrent la racine, qui n'a pas
+# de package.json et donc pas de .gitignore propre. Sans elles, `git status`
+# affichait des milliers de fichiers.
+node_modules/
+.next/
+*.tsbuildinfo
+
+# Artefacts d'empaquetage desktop : des centaines de Mo, regeneres a chaque
+# build, et deja ignores par desktop/.gitignore. Ce rappel n'apporte rien.
+
+# Fichiers publies : des centaines de Mo par version. Le manifeste
+# versions.json se regenere avec scripts/mkversions.mjs.
+public/*
+!public/README.md
+!public/A_PUBLIER.md
+
+# Le site est un depot git a part, deploye seul sur Vercel. Sans cette ligne,
+# `git add -A` y ajouterait un gitlink : le depot principal referencing un
+# depot imbrique, que personne ne peut cloner ni construire.
+site/
