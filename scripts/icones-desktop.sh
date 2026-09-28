@@ -51,7 +51,7 @@ rendu_preparer
 # marge pour un fond d'ecran en 4K. Le PNG reste sans perte — c'est la source
 # dont le .ico est tire, une compression avec perte se verrait au 16 px.
 rend 512 "$BUILD/icon.png" "$SVG"
-convert "$BUILD/icon.png" -define png:compression-level=9 "$BUILD/icon.png"
+convert "$BUILD/icon.png" -strip -define png:compression-level=9 "$BUILD/icon.png"
 
 # Le .ico, a sept tailles. Windows choisit selon le contexte : 16 dans la barre
 # des taches, 32 dans l'explorateur, 256 dans les grandes vues. Chaque taille

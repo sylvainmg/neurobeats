@@ -55,7 +55,10 @@ icone() { # taille, sortie, svg
   local t="$1" out="$2" svg="$3"
   local tmp="$RENDU_TRAVAIL/mobile-$t-$(basename "$svg")"
   rend "$t" "$tmp.png" "$svg" || return 1
-  convert "$tmp.png" -define png:compression-level=9 "$out"
+  # `-strip` rend l'ecriture reproductible. Chrome inscrit un `date:timestamp`
+  # dans le PNG : deux rendus identiques différaient alors sur cinq octets, et
+  # relancer le script salissait l'arbre de travail pour rien.
+  convert "$tmp.png" -strip -define png:compression-level=9 "$out"
   printf "  ✓ %-30s %3spx  %6s octets\n" "$(basename "$out")" "$t" \
     "$(stat -c%s "$out")"
 }
