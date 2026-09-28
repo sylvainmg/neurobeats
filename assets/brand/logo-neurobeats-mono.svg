@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="NeuroBeats">
+  <!-- Les BARRES SEULES, sur fond vide.
+
+       Ce fichier sert deux fois. En couche d'AVANT-PLAN, les barres se posent
+       sur le disque bleu plein bord : leur couleur compte alors, et c'est le
+       bleu nuit de la marque. En couche MONOCHROME, Android 13+ teinte
+       l'image a la palette de l'utilisateur et n'en garde que la forme : la
+       couleur est alors indiferente, une seule suffit.
+
+       Les coordonnees sont celles de logo-neurobeats.svg, a l'identique. Les
+       deux fichiers sont rendus a la meme echelle, donc la forme teintee se
+       superpose exactement a la forme en couleur. -->
+  <g fill="#0F1419">
+    <rect x="191" y="74"  width="130" height="53" rx="26.5"/>
+    <rect x="116" y="152" width="281" height="53" rx="26.5"/>
+    <rect x="51"  y="230" width="411" height="53" rx="26.5"/>
+    <rect x="116" y="308" width="280" height="53" rx="26.5"/>
+    <rect x="191" y="386" width="130" height="53" rx="26.5"/>
+  </g>
+</svg>

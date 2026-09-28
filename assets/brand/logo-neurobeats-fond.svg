@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="NeuroBeats">
+  <!-- Le FOND de l'icone adaptative : un degrade plein, sans disque ni barres.
+
+       Il ne remplit pas le disque mais TOUT le canevas. Deux raisons, toutes
+       deux apprises sur l'appareil :
+
+       1. La couche de fond ne peut pas etre vide. Le systeme comble alors le
+          masque avec un carre arrondi noir, et l'icone paraissait enchassee
+          dans un cadre sombre sur n'importe quel fond clair.
+       2. Elle ne peut pas etre le disque non plus. Le masque du lanceur est un
+          carre arrondi, alors que le disque est rond : les quatre coins
+          seraient transparents, et le fond d'ecran y transparaisserait.
+
+       Un aplat plein, lui, ne laisse rien a voir : le lanceur rogne, et c'est
+       lui qui donne la forme. Le degrade est celui de la marque, sur toute la
+       hauteur du canevas, donc l'icone garde son bleu qui vire au cyan. -->
+  <defs>
+    <linearGradient id="nb-degrade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0067FF"/>
+      <stop offset="1" stop-color="#00D8FF"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" fill="url(#nb-degrade)"/>
+</svg>

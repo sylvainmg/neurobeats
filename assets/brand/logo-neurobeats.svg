@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="NeuroBeats">
+  <defs>
+    <linearGradient id="nb-fond" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0067FF"/>
+      <stop offset="1" stop-color="#00D8FF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Le disque, puis les barres POSES PAR-DESSUS.
+       Elles ne sont pas des trous : sur le site, un trou laissait voir le fond
+       de la page, et sur un lanceur il laissait voir le fond d'ecran. Une icone
+       bleu vif barree de beige sur un papier peint beige, c'est imprevisible.
+       Peintes, elles se lisent pareil partout — et sur le fond sombre du site,
+       l'apparence est identique a celle d'avant. -->
+  <circle cx="256" cy="256" r="255" fill="url(#nb-fond)"/>
+  <g fill="#0F1419">
+    <rect x="191"   y="74"  width="130" height="53" rx="26.5"/>
+    <rect x="116"   y="152" width="281" height="53" rx="26.5"/>
+    <rect x="51"    y="230" width="411" height="53" rx="26.5"/>
+    <rect x="116"   y="308" width="280" height="53" rx="26.5"/>
+    <rect x="191"   y="386" width="130" height="53" rx="26.5"/>
+  </g>
+</svg>

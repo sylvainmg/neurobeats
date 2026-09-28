@@ -1,15 +1,15 @@
 {
   "name": "neurobeats-desktop",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "NeuroBeats desktop — wrapper Electron (backend + frontend dans un conteneur)",
   "desktopName": "NeuroBeats",
   "main": "dist/main/index.js",
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "icon": "node -e \"const fs=require('node:fs');fs.mkdirSync('build',{recursive:true});fs.copyFileSync('../web/assets/logo-mark.png','build/icon.png')\"",
+    "icon": "bash ../scripts/icones-desktop.sh",
     "dev": "npm run build && electron . --dev",
-    "build": "npm run icon && npm run clean && tsc && npm run build:preload",
+    "build": "npm run icon && npm run clean && tsc --noEmit && npm run build:main && npm run build:preload",
     "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --format=cjs --target=chrome130 --external:electron --sourcemap --outfile=dist/preload/index.js",
     "start": "npm run build && electron .",
     "standalone": "node scripts/sync-web.mjs",
@@ -18,7 +18,10 @@
     "fetch:llama": "node scripts/fetch-llama.mjs",
     "stage": "node scripts/stage-runtime.mjs",
     "package": "npm run build && npm run standalone && npm run fetch:llama && npm run fetch:bin && npm run stage && electron-builder --publish never",
-    "package:dir": "npm run build && npm run stage && electron-builder --dir --publish never"
+    "package:dir": "npm run build && npm run stage && electron-builder --dir --publish never",
+    "build:main": "esbuild src/main/index.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --sourcemap --outfile=dist/main/index.js",
+    "package:win": "node scripts/package.mjs win32-x64",
+    "package:linux": "node scripts/package.mjs linux-x64"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -65,12 +68,16 @@
     ],
     "linux": {
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb"
       ],
       "syncDesktopName": true,
       "category": "AudioVideo",
       "synopsis": "Streaming musical NeuroBeats",
-      "artifactName": "NeuroBeats-${version}-${arch}.${ext}"
+      "artifactName": "NeuroBeats-${version}-${arch}.${ext}",
+      "maintainer": "NeuroBeats <sylvainmg@users.noreply.github.com>",
+      "vendor": "NeuroBeats",
+      "description": "Streaming musical NeuroBeats"
     },
     "mac": {
       "target": "dmg",
@@ -87,5 +94,10 @@
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
+  },
+  "homepage": "https://neurobeats.site",
+  "author": {
+    "name": "NeuroBeats",
+    "email": "sylvainmg@users.noreply.github.com"
   }
 }
