@@ -10,6 +10,7 @@ import {
   type GestureResponderEvent,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -20,9 +21,12 @@ import {
   type ViewStyle,
 } from "react-native";
 
-import { IconAlert, IconCodeQr, IconSync } from "@/ui/icons";
+import { IconAlert, IconChevronRight, IconCodeQr, IconSync } from "@/ui/icons";
 import { useApp } from "@/state/app";
 import { colors, degrade, ease, ombre, radius, space, tabular, touch, type as typo } from "@/theme/tokens";
+
+/** Adresse du site du projet : le lien l'ouvre dans le navigateur du systeme. */
+const SITE_WEB = "https://neurobeats.site";
 
 const COURBE = Easing.bezier(ease[0], ease[1], ease[2], ease[3]) as EasingFunction;
 
@@ -698,6 +702,46 @@ export function TitreSection({ texte, style }: { texte: string; style?: TextStyl
   return <Text style={[styles.titreSection, style]}>{texte}</Text>;
 }
 
+/**
+ * Ligne ouvrant une adresse web, dans le navigateur du système.
+ *
+ * Distincte de `Bouton` pour une raison précise : `Bouton` rend dans l'écran, un
+ * lien doit sortir de l'application. Passer par un `Linking` explicite plutôt que
+ * par un `Button` qui ouvrirait l'URL — c'est le comportement attendu sur
+ * Android, où une navigation interne bornée à l'application est une impasse.
+ *
+ * L'étiquette annonce la destination et le fait qu'un nouvel onglet s'ouvre :
+ * un lecteur d'écran qui n'annonçait que « Ouvrir » ne dirait pas où l'on va.
+ */export function LigneLien({
+  titre,
+  detail,
+  presse,
+}: {
+  titre: string;
+  detail: string;
+  /** Ce qu'un lecteur d'écran doit annoncer au lieu du libellé nu. */
+  presse: string;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={presse}
+      onPress={() => void Linking.openURL(SITE_WEB)}
+      style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}
+    >
+      <View style={styles.lienLigne}>
+        <View style={styles.lienTextes}>
+          <Text style={styles.lienTitre} numberOfLines={1}>
+            {titre}
+          </Text>
+          <Text style={styles.lienDetail}>{detail}</Text>
+        </View>
+        <IconChevronRight size={18} color={colors.ink2} />
+      </View>
+    </Pressable>
+  );
+}
+
 /** Séparateur hairline, entre deux lignes d'une même liste. */
 export function Separateur({ style }: { style?: ViewStyle }) {
   return <View style={[styles.separateur, style]} />;
@@ -734,6 +778,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: space.sm,
   },
+  // Ligne de lien : meme hauteur de toucher que `Bouton`, avec un chevron a
+  // droite comme le reste de l'application. `flex: 1` sur les textes pour que
+  // le detail long se replie au lieu de pousser le chevron hors de l'ecran.
+  lienLigne: {
+    minHeight: touch.min,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.md,
+  },
+  lienTextes: { flex: 1, gap: 2 },
+  lienTitre: { fontSize: 13.5, lineHeight: 18, fontWeight: "600", color: colors.ink },
+  lienDetail: { ...typo.caption, color: colors.ink2 },
   boutonPetit: { minHeight: 40, paddingHorizontal: space.lg },
   boutonFantome: { borderWidth: 1, borderColor: colors.borderFort },
   boutonTexte: { ...typo.body, fontWeight: "600" },

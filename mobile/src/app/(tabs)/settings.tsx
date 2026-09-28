@@ -20,7 +20,7 @@ import { viderLeTelephone } from "@/library/effacement";
 import { useLecture } from "@/playback/store";
 import { useApp } from "@/state/app";
 import { pluraliser } from "@/transfer/format";
-import { Bouton, EnTeteEcran, TitreSection, Valeur } from "@/ui/kit";
+import { Bouton, EnTeteEcran, LigneLien, TitreSection, Valeur } from "@/ui/kit";
 import { useDialogue } from "@/ui/dialog";
 import { IconTrash } from "@/ui/icons";
 import { placeEnBas } from "@/ui/barre";
@@ -93,6 +93,18 @@ export default function Reglages() {
           <TitreSection texte="Origine de la musique" />
           <Text style={styles.consequence}>
             Tes playlists arrivent depuis ton ordinateur.
+          </Text>
+        </View>
+
+        <View style={styles.groupe}>
+          <TitreSection texte="Le projet" />
+          <LigneLien
+            titre="neurobeats.site"
+            detail="Documentation, versions, code source"
+            presse="neurobeats.site, ouvre le site du projet dans le navigateur"
+          />
+          <Text style={styles.consequence}>
+            Ce que l'app envoie sur le réseau y est détaillé.
           </Text>
         </View>
 
