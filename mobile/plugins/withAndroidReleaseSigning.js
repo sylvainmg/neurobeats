@@ -25,6 +25,21 @@ function releaseSigningBlock(alias) {
                 keyAlias System.getenv("${alias}")
                 keyPassword System.getenv("ANDROID_KEY_PASSWORD")
             }
+            // Schemas de signature. \`minSdkVersion\` vaut 29, donc le v1 (JAR)
+            // ne sert a rien et ne ferait qu'alourdir l'APK : tous les appareils
+            // vises lisent le v2 (API 24+).
+            //
+            // Le v3 merite d'etre explicite parce qu'il change la consequence
+            // d'une perte de cle. En v2 seul, perdre l'archive .jks rend
+            // l'application figee a jamais : Android refuse d'installer une
+            // version signee par une autre cle, et il n'existe aucun recours.
+            // Le v3 autorise la rotation (\`apksigner rotate\`), qui re-signe
+            // l'application avec une cle neuve tout en conservant l'habilitation
+            // de l'ancienne. C'est le seul filet derriere l'avertissement de
+            // sauvegarde, et il est gratuit une fois pose.
+            enableV1Signing false
+            enableV2Signing true
+            enableV3Signing true
         }
 `;
 }
