@@ -292,20 +292,38 @@ export async function listerPlaylists(): Promise<Playlist[]> {
             (SELECT COALESCE(SUM(t.taille), 0) FROM tracks t WHERE t.playlist_id = p.playlist_id
                AND t.etat = 'chez_toi') AS octets,
             -- La pochette de la playlist : celle du titre désigné comme
-            -- couverture (la règle du PC), sinon celle de son premier titre.
-            -- C'est la logique du web, où la pochette d'une playlist est celle
-            -- de son premier titre — et c'est ce qui donne une image à une
+            -- couverture (la règle du PC), SINON celle du premier titre qui en
+            -- a une. C'est la logique du web, où la pochette d'une playlist est
+            -- celle de son premier titre — et c'est ce qui donne une image à une
             -- playlist née sur le téléphone, qui n'a pas de couverture désignée.
             --
-            -- La comparaison à la couverture vit dans le WHERE, jamais dans un
-            -- ORDER BY : SQLite refuse une référence à la table extérieure dans
-            -- le tri d'une sous-requête (« no such column: p.couverture »).
-            (SELECT t.pochette FROM tracks t
-              WHERE t.playlist_id = p.playlist_id
-                AND t.pochette IS NOT NULL
-                AND (p.couverture IS NULL OR t.video_id = p.couverture)
-              ORDER BY t.id
-              LIMIT 1) AS pochette
+            -- Le repli n'est pas décoratif, et son absence se voyait à l'écran :
+            -- une couverture est désignée par l'ordinateur, mais les pochettes
+            -- se téléchargent ensuite une par une. Tant que celle de la
+            -- couverture n'est pas arrivée, l'ancienne clause
+            -- « ET t.video_id = p.couverture » renvoyait NULL et la liste
+            -- n'affichait rien — alors que l'écran de détail, qui se rabattait
+            -- sur un titre quelconque, affichait l'image. Deux écrans, une même
+            -- donnée, un repli d'un seul côté.
+            --
+            -- Deux sous-requêtes en COALESCE, et non un ORDER BY qui privilégie
+            -- la couverture : SQLite refuse de référencer la table extérieure
+            -- dans le tri d'une sous-requête (« no such column: p.couverture »).
+            -- C'est pour contourner cette erreur que la clause d'origine avait
+            -- été écrite, et ce contournement est précisément ce qui a supprimé
+            -- le repli.
+            COALESCE(
+              (SELECT t.pochette FROM tracks t
+                WHERE t.playlist_id = p.playlist_id
+                  AND t.pochette IS NOT NULL
+                  AND t.video_id = p.couverture
+                LIMIT 1),
+              (SELECT t.pochette FROM tracks t
+                WHERE t.playlist_id = p.playlist_id
+                  AND t.pochette IS NOT NULL
+                ORDER BY t.id
+                LIMIT 1)
+            ) AS pochette
      FROM playlists p ORDER BY p.importee_le DESC`,
   );
 }
@@ -315,13 +333,24 @@ export async function playlistParId(playlist_id: string): Promise<Playlist | nul
   return handle.getFirstAsync<Playlist>(
     `SELECT p.*,
             -- La grande pochette du détail : exactement la même image que
-            -- l'icône — celle de la couverture, sinon celle du premier titre.
-            (SELECT t.pochette FROM tracks t
-              WHERE t.playlist_id = p.playlist_id
-                AND t.pochette IS NOT NULL
-                AND (p.couverture IS NULL OR t.video_id = p.couverture)
-              ORDER BY t.id
-              LIMIT 1) AS pochette
+            -- l'icône — la MÊME règle, au caractère près. La clause
+            -- d'origine ne se contentait pas de la reproduire, elle en écartait
+            -- une partie : voir le commentaire de listerPlaylists. L'écran de
+            -- détail s'en rendait compte malgré tout, en se rabattant sur ses
+            -- titres en mémoire. D'où une incohérence visible entre les deux
+            -- écrans : la liste vide, le détail rempli.
+            COALESCE(
+              (SELECT t.pochette FROM tracks t
+                WHERE t.playlist_id = p.playlist_id
+                  AND t.pochette IS NOT NULL
+                  AND t.video_id = p.couverture
+                LIMIT 1),
+              (SELECT t.pochette FROM tracks t
+                WHERE t.playlist_id = p.playlist_id
+                  AND t.pochette IS NOT NULL
+                ORDER BY t.id
+                LIMIT 1)
+            ) AS pochette
      FROM playlists p WHERE p.playlist_id = ?`,
     playlist_id,
   );
