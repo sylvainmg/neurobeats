@@ -46,18 +46,18 @@
   },
   "win32-x64": {
     "ffmpeg": {
-      "file": "ffmpeg-n8.1-latest-win64-gpl-8.1.zip",
-      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip",
-      "sha256": "0157dfb95cff86d6cce0e6678e8037ba537e3b7b38f1d801cb5852870ad1bc10",
+      "file": "ffmpeg-n8.1.3-2-g45e8e0a3ff-win64-gpl-8.1.zip",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-27-13-04/ffmpeg-n8.1.3-2-g45e8e0a3ff-win64-gpl-8.1.zip",
+      "sha256": "16c5956a513ec236ed8b5786920662ab5a4a94e4ec553a8aebcf161439ef5416",
       "wholeDir": false,
-      "comment": "Build statique : ffmpeg.exe et ffprobe.exe sont autonomes, sans DLL a cote. Les builds `*-shared-*` sont volontairement exclus."
+      "comment": "Build statique : ffmpeg.exe et ffprobe.exe sont autonomes, sans DLL a cote. Les builds `*-shared-*` sont volontairement exclus. URL sur un tag `autobuild-*` et NON sur `latest` : `latest` est une release rouliere (republiee plusieurs fois par jour), donc une empreinte epinglee dessus finit neccessairement par ne plus correspondre. Le nom de l'asset porte la version (n8.1.3) et le commit (g45e8e0a3ff), ce qui rend l'URL immuable."
     },
     "ffprobe": {
-      "file": "ffmpeg-n8.1-latest-win64-gpl-8.1.zip",
-      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip",
-      "sha256": "0157dfb95cff86d6cce0e6678e8037ba537e3b7b38f1d801cb5852870ad1bc10",
+      "file": "ffmpeg-n8.1.3-2-g45e8e0a3ff-win64-gpl-8.1.zip",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-27-13-04/ffmpeg-n8.1.3-2-g45e8e0a3ff-win64-gpl-8.1.zip",
+      "sha256": "16c5956a513ec236ed8b5786920662ab5a4a94e4ec553a8aebcf161439ef5416",
       "wholeDir": false,
-      "comment": "Meme archive que ffmpeg : les deux binaires sont dans bin/."
+      "comment": "Meme archive que ffmpeg : les deux binaires sont dans bin/. Meme raison qu'au tag `autobuild-*` plutot qu'a `latest`."
     },
     "mpv": {
       "file": "mpv-x86_64-20260927-git-a1bf4b6559.7z",

@@ -23,6 +23,7 @@ import {
   archiveRoot,
   copyResolved,
   isWindows,
+  lanceurCible,
   pythonKey,
   say,
   verifyChecksum,
@@ -72,9 +73,14 @@ function pythonExecutable(pythonDir) {
 }
 
 const pythonDir = path.join(target, "python");
-const cached = pythonExecutable(pythonDir);
+const marker = path.join(cache, `.ready-${key}`);
 
+const cached = pythonExecutable(pythonDir);
 if (cached) {
+  // Le marqueur est (re)ecrit meme en sortie antecipee : c'est lui que
+  // stage-runtime.mjs lit pour retrouver le chemin, et l'ignorer ici laissait
+  // un runtime deja present mais considered absent.
+  await fs.writeFile(marker, pythonDir, "utf8");
   say(`→ Runtime Python deja en cache : ${cached}`);
   process.exit(0);
 }
@@ -134,7 +140,6 @@ say(`  ${executable}`);
 // stage-runtime.mjs relit ce fichier : il ne faut pas qu'il doive deviner la
 // position de l'interpreteur, qui differe entre Unix (bin/) et Windows
 // (racine), ni deriver la cle de plate-forme une seconde fois.
-const marker = path.join(cache, ".ready");
 await fs.writeFile(marker, pythonDir, "utf8");
 
 function exists(target) {
@@ -146,10 +151,20 @@ function exists(target) {
 }
 
 async function captureVersion(exe) {
+  // Le runtime de la cible n'est pas forcement executable ici : sous un build
+  // croise, `python.exe` est un PE32 que seul wine sait lancer. Sans le
+  // lanceur, la sortie est le `not found` du shell devant l'en-tete `MZ` du
+  // binaire — bruyant, et facelement lu comme « runtime corrompu » plutot que
+  // « mauvais lanceur ».
+  const { prefixe, env } = lanceurCible();
   return new Promise((resolve) => {
     let out = "";
+    const argv = prefixe.length ? [...prefixe, exe, "-V"] : [exe, "-V"];
     // `-V` ecrit sur stderr : on capture les deux flux.
-    const proc = spawn(exe, ["-V"], { stdio: ["ignore", "pipe", "pipe"] });
+    const proc = spawn(argv[0], argv.slice(1), {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...env },
+    });
     proc.stdout.on("data", (chunk) => (out += chunk));
     proc.stderr.on("data", (chunk) => (out += chunk));
     proc.on("close", () => resolve(out.trim() || "version inconnue"));

@@ -11,6 +11,9 @@
       ],
       "modules/*": [
         "./modules/*"
+      ],
+      "@neurobeats/shared/*": [
+        "../shared/*"
       ]
     }
   },

@@ -26,14 +26,20 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { executerCible } from "./lib/staging.mjs";
 import {
   binName,
   copyResolved,
   copyTree,
+  depuisCheminCible,
   formatAttendu,
   isWindows,
+  lanceurCible,
+  platformKey,
+  pythonKey,
   run,
   say,
+  versCheminCible,
   verifierFormat,
 } from "./lib/build-env.mjs";
 
@@ -65,6 +71,18 @@ const nativeExe = path.join(pythonDir, binName("python"));
 if (existsSync(nativeExe)) {
   await fs.copyFile(nativeExe, path.join(binDir, binName("python")));
   if (!isWindows) await fs.chmod(path.join(binDir, binName("python")), 0o755);
+
+  // Sous Windows, le chargeur ne cherche les DLL qu'A COTE de l'executable :
+  // `python.exe` seul dans `bin/` sort en code 53, car `python313.dll`,
+  // `python3.dll` et les runtimes vcruntime sont a la racine du runtime. Sous
+  // Linux le meme deplacement fonctionne, mais grace au RPATH
+  // `$ORIGIN/../lib` pose dans le binaire — d'ou l'illusion que la
+  // normalisation suffit. On copie donc les DLL de la racine a cote de
+  // l'executable, sinon le moteur backend ne demarre pas chez l'utilisateur.
+  for (const nom of await fs.readdir(pythonDir)) {
+    if (!nom.toLowerCase().endsWith(".dll")) continue;
+    await fs.copyFile(path.join(pythonDir, nom), path.join(binDir, nom));
+  }
 }
 const python = path.join(binDir, binName("python"));
 if (!existsSync(python)) {
@@ -102,12 +120,23 @@ await copyTree(path.join(root, "backend"), stage, {
 
 /* ---------------------------------------------------------- Dependances pip */
 
+// L'etape suivante fait tourner LE runtime de la cible : `pip` doit y installer
+// des wheels `win_amd64`, donc c'est bien le Python Windows qui fait le travail.
+// Depuis Linux ou macOS, ce runtime passe par wine — d'ou la traduction de
+// chemin des deux cotes. Sans wine, l'artefact n'aurait pas de moteur : mieux
+// vaut le dire que produire un `.exe` sans backend.
+const lanceur = lanceurCible();
+if (lanceur.prefixe.length > 0) {
+  say(`→ Runtime cible ${platformKey()} exécuté via ${lanceur.prefixe[0]}`);
+}
+
 say("→ Installation des dependances desktop");
-const sitePackages = await capture(
-  python,
-  ["-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+// `sysconfig` renvoie un chemin Windows sous wine : on le relit en chemin Linux
+// pour pouvoir copier le dossier depuis Node.
+const sitePackagesLinux = depuisCheminCible(
+  await capture(python, ["-c", "import sysconfig; print(sysconfig.get_path('purelib'))"]),
 );
-await run(python, [
+await executerCible(python, [
   "-m",
   "pip",
   "install",
@@ -119,7 +148,7 @@ await run(python, [
   // compilation depuis les sources : echec bruyant plutot qu'un runtime
   // incomplet et silencieusement different.
   "--only-binary=:all:",
-  `--target=${sitePackages}`,
+  `--target=${versCheminCible(sitePackagesLinux)}`,
   "-r",
   path.join(desktop, "scripts", "requirements-desktop.txt"),
 ]);
@@ -184,7 +213,9 @@ async function resolvePythonRoot() {
   }
   // Sinon, on telecharge le runtime de la plate-forme.
   const cache = path.join(os.tmpdir(), "neurobeats-python-cache");
-  const marker = path.join(cache, ".ready");
+  // Indexe par plate-forme, comme le cache lui-meme : un marqueur unique
+  // ferait passer un runtime Linux pour un runtime Windows.
+  const marker = path.join(cache, `.ready-${pythonKey()}`);
   if (!existsSync(marker)) {
     await run(process.execPath, [path.join(here, "fetch-python.mjs")], {
       env: { ...process.env, NEUROBEATS_PYTHON_CACHE: cache },
@@ -195,9 +226,23 @@ async function resolvePythonRoot() {
   return path.resolve(await fs.readFile(marker, "utf8"));
 }
 
-async function capture(command, args) {
+/**
+ * Execute une commande en capturant sa sortie.
+ *
+ * Passe par `executerCible` comme le `run` de l'installation des dependances,
+ * pour que le lanceur (wine) et l'environnement soient poses de facon
+ * identique dans les deux cas.
+ */
+function capture(binaire, args) {
+  const { prefixe, env } = lanceurCible();
+  const argv = prefixe.length
+    ? [...prefixe, binaire, ...args]
+    : [binaire, ...args];
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(argv[0], argv.slice(1), {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...env },
+    });
     let out = "";
     let err = "";
     child.stdout.on("data", (chunk) => (out += chunk));

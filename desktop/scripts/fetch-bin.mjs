@@ -33,6 +33,7 @@ import {
   say,
   verifyChecksum,
 } from "./lib/build-env.mjs";
+import { preparerDossierCible } from "./lib/staging.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const manifest = JSON.parse(
@@ -62,7 +63,10 @@ const cache = process.env.NEUROBEATS_BIN_CACHE
   ? path.resolve(process.env.NEUROBEATS_BIN_CACHE)
   : path.join(os.tmpdir(), "neurobeats-bin");
 
-await fs.mkdir(binDir, { recursive: true });
+// Le dossier est purge s'il contient les binaires d'une autre cible : c'est ce
+// qui manquait pour que `mpv` (fichier ELF Linux) ne survive pas a l'extraction
+// Windows.
+await preparerDossierCible(binDir);
 
 for (const [tool, spec] of Object.entries(entries)) {
   await stage(tool, spec);
@@ -132,15 +136,31 @@ async function stage(tool, spec) {
   }
 }
 
+/**
+ * Copie l'exécutable du système, en déréférençant le lien symbolique.
+ *
+ * Ne copie QUE le fichier. La version précédente faisait
+ * `copyResolved(path.dirname(candidate), binDir)`, c'est-à-dire copiait le
+ * dossier entier : sur une distribution, ce dossier est `/usr/bin`, et
+ * l'artefact embarquait 1 855 fichiers pour 1,6 Go — `bash`, `apt`, `curl`,
+ * `7z`… Le contrôle de charge utile ne le voyait pas, puisque `mpv`, `ffmpeg`
+ * et `ffprobe` y étaient bien, au bon format. C'est ce qui remplissait le
+ * disque et faisait échouer le build sur `ENOSPC`.
+ *
+ * Le déréférencement reste nécessaire : `/usr/bin/ffmpeg` est souvent un lien
+ * symbolique, et un lien copié tel quel pointerait vers un chemin qui
+ * n'existera pas chez l'utilisateur.
+ */
 async function fromSystem(tool) {
+  const nom = binName(tool);
   const dirs = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
   for (const dir of dirs) {
-    const candidate = path.join(dir, binName(tool));
+    const candidate = path.join(dir, nom);
     if (await exists(candidate)) {
-      // Copie dereferencee : /usr/bin/ffmpeg est souvent un lien symbolique.
-      await copyResolved(path.dirname(candidate), binDir).catch(async () => {
-        await fs.copyFile(candidate, path.join(binDir, binName(tool)));
-      });
+      const cible = path.join(binDir, nom);
+      const reel = await fs.realpath(candidate).catch(() => candidate);
+      await fs.copyFile(reel, cible);
+      if (!isWindows) await fs.chmod(cible, 0o755);
       return candidate;
     }
   }

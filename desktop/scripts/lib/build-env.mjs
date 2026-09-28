@@ -5,6 +5,22 @@
  * `uname -s` renvoie `MINGW64_NT-…`, qui ne correspond a aucune branche du
  * `case` de fetch-llama.sh et faisait `exit 1`. Node expose la vraie
  * plate-forme, donc plus d'ambiguite.
+ *
+ * # Cible et hote sont deux choses differentes
+ *
+ * `isWindows` / `isMac` / `isLinux` decrivent la CIBLE de l'artefact, pas la
+ * machine qui construit. Les deux ne coincident que sur un build natif, et la
+ * confusion est lourde de consequences : un build `--win` lance sur Linux doit
+ * aller chercher les binaires Windows, les nommer `mpv.exe`, et verifier
+ * qu'ils sont bien des PE32. Sans cette distinction, un build etranger
+ * embarquait les binaires du systeme — c'est ainsi qu'un `.exe` de 321 Mo a ete
+ * produit avec des ELF Linux a l'interieur, donc sans aucun lecteur audio.
+ *
+ * `NEUROBEATS_TARGET_PLATFORM` force la cible (`win32-x64`, `darwin-arm64`,
+ * `linux-x64`…). Elle ne remplace pas `process.platform` partout : `onWindows` /
+ * `onMac` / `onLinux` decrivent l'hote et servent a choisir un OUTIL systeme
+ * (`7z`, `shell: true`), qui doit exister la ou la commande est lancee, pas dans
+ * l'artefact produit.
  */
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
@@ -12,16 +28,153 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { spawn } from "node:child_process";
+import os from "node:os";
 
-export const isWindows = process.platform === "win32";
-export const isMac = process.platform === "darwin";
-export const isLinux = process.platform === "linux";
+// --- l'hote, tel qu'il est ----------------------------------------------------
 
-/** Cle du manifeste python-build.json pour la plate-forme courante. */
-export function pythonKey() {
-  if (isWindows) return "win32-x64";
-  if (isMac) return process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
+export const onWindows = process.platform === "win32";
+export const onMac = process.platform === "darwin";
+export const onLinux = process.platform === "linux";
+
+function cleDeLhote() {
+  if (onWindows) return "win32-x64";
+  if (onMac) return process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
   return process.arch === "arm64" ? "linux-arm64" : "linux-x64";
+}
+
+const CIBLES_CONNUES = new Set([
+  "win32-x64",
+  "darwin-x64",
+  "darwin-arm64",
+  "linux-x64",
+  "linux-arm64",
+]);
+
+const cibleDemandee = (process.env.NEUROBEATS_TARGET_PLATFORM ?? "").trim();
+
+if (cibleDemandee && !CIBLES_CONNUES.has(cibleDemandee)) {
+  throw new Error(
+    `NEUROBEATS_TARGET_PLATFORM inconnue : « ${cibleDemandee} ». ` +
+      `Attendues : ${[...CIBLES_CONNUES].join(", ")}`,
+  );
+}
+
+/**
+ * electron-builder ne produit pas de cible macOS hors macOS : le `.dmg`
+ * exige `hdiutil` ou `dmgbuild`, et le bundle `.app` doit etre assemble par un
+ * outil mac. Aucun equivalent de wine n'existe pour ces outils, donc la
+ * contrainte est reels : on echoue tot et clairement plutot que de livrer un
+ * `.dmg` vide.
+ *
+ * Windows, en revanche, se construit depuis Linux ou macOS : wine sait
+ * executer le runtime Python de la cible ( indispensable : `pip` doit y
+ * installer des wheels win_amd64) et electron-builder s'en sert deja pour
+ * l'assemblage NSIS. C'est ce qui distingue les deux cibles.
+ */
+if (cibleDemandee.startsWith("darwin") && !onMac) {
+  throw new Error(
+    `Cible macOS demandée depuis ${process.platform} : impossible. Un .dmg exige ` +
+      "macOS (hdiutil / dmgbuild), et aucun equivalent de wine n'existe. " +
+      "Construisez sur un Mac, ou sur un runner macOS.",
+  );
+}
+
+/**
+ * wine est-il utilisable pour executer un binaire Windows ici ?
+ *
+ * Le prefixe est fixe et explicite : un prefixe implicite atterrit dans `~/.wine`,
+ * et le build dependrait alors de l'etat d'un prefixe que personne ne controle.
+ */
+function wineDisponible() {
+  if (onWindows) return true;
+  for (const dir of (process.env.PATH || "").split(path.delimiter).filter(Boolean)) {
+    if (existsSync(path.join(dir, "wine"))) return true;
+  }
+  return false;
+}
+
+// Le prefixe ne doit PAS etre sous `/tmp` : wine verifie la propriete du chemin
+// et refuse de creer sa configuration la ou le repertoire n'appartient pas a
+// l'utilisateur ("'/tmp' is not owned by you, refusing to create a
+// configuration directory there"). On suit donc la convention XDG, qui est par
+// definition dans le repertoire de l'utilisateur.
+export const prefixeWine =
+  process.env.NEUROBEATS_WINEPREFIX ||
+  path.join(
+    process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"),
+    "neurobeats-wine",
+  );
+
+/** Cle de manifeste pour la plate-forme CIBLE. */
+export function platformKey() {
+  return cibleDemandee || cleDeLhote();
+}
+
+/** La cible est-elle differente de la machine qui construit ? */
+export function estCroisee() {
+  return cibleDemandee !== "" && cibleDemandee !== cleDeLhote();
+}
+
+export const isWindows = platformKey().startsWith("win32");
+export const isMac = platformKey().startsWith("darwin");
+export const isLinux = platformKey().startsWith("linux");
+
+/** Cle du manifeste python-build.json pour la plate-forme cible. */
+export function pythonKey() {
+  return platformKey();
+}
+
+/* ------------------------------------------------- executer la cible ici */
+
+const wineManquant =
+  cibleDemandee.startsWith("win32") && !onWindows && !wineDisponible();
+
+/**
+ * Commande a lancer pour executer le runtime DE LA CIBLE sur CETTE machine.
+ *
+ * Natif : tel quel. Cible Windows hors Windows : prefixe par wine. Sans wine on
+ * ne peut pas installer les dependances backend (les wheels doivent etre des
+ * `win_amd64`, donc c'est bien le Python Windows qui doit faire le travail), et
+ * un artefact sans backend ne servirait a rien.
+ */
+export function lanceurCible() {
+  if (!cibleDemandee.startsWith("win32") || onWindows) {
+    return { prefixe: [], env: {} };
+  }
+  if (wineManquant) {
+    throw new Error(
+      "Cible win32-x64 depuis " +
+        `${process.platform} sans wine : impossible d'installer les dependances ` +
+        "backend (pip doit interpreter des wheels win_amd64). Installez wine, " +
+        "ou construisez sur une machine Windows.",
+    );
+  }
+  return {
+    prefixe: ["wine"],
+    env: { WINEPREFIX: prefixeWine, WINEDEBUG: "-all" },
+  };
+}
+
+/**
+ * Chemin vu par le runtime de la cible.
+ *
+ * Sous wine, `Z:` designe la racine du systeme de fichiers Linux. C'est
+ * reversible et sans ambiguite, donc un chemin Linux se traduit simplement.
+ * L'inverse aussi : `sysconfig` renvoie `Z:\\tmp\\...`, qu'il faut relire
+ * comme `/tmp/...` pour pouvoir copier le dossier depuis Node.
+ */
+export function versCheminCible(cheminLinux) {
+  const absolu = path.resolve(cheminLinux);
+  if (!cibleDemandee.startsWith("win32") || onWindows) return absolu;
+  return `Z:\\${absolu.replace(/^\//, "").split(path.sep).join("\\")}`;
+}
+
+export function depuisCheminCible(chemin) {
+  if (cibleDemandee.startsWith("win32") && /^Z:/i.test(chemin)) {
+    const reste = chemin.slice(2).replace(/\\/g, "/");
+    return reste.startsWith("/") ? reste : `/${reste}`;
+  }
+  return chemin;
 }
 
 /** Nom de l'executable d'un binaire sur la plate-forme courante. */
@@ -177,7 +330,15 @@ export async function extractTarGz(archive, dest) {
   await run("tar", ["-xzf", archive, "-C", dest]);
 }
 
-/** Decompresse un `.zip` (llama.cpp sous Windows). */
+/**
+ * Decompresse un `.zip` (llama.cpp et ffmpeg sous Windows).
+ *
+ * Trois extracteurs sont essayes dans l'ordre, et le premier qui reussit gagne.
+ * Le repli sur `tar` seul ne suffit pas : le `tar` de GNU ne reconnait pas un zip
+ * ("Ceci ne ressemble pas a une archive de type tar"), et c'est celui de la
+ * plupart des distributions Linux. `7z` lit le zip comme le 7z — d'ou sa
+ * presence dans les deux listes — et `unzip` est le dernier recours.
+ */
 export async function extractZip(archive, dest) {
   await fs.mkdir(dest, { recursive: true });
   try {
@@ -185,10 +346,27 @@ export async function extractZip(archive, dest) {
     const { extract } = await import("@electron-internal/extract-zip");
     await extract(archive, { dir: path.resolve(dest) });
     return;
-  } catch {
-    say("  (extract-zip indisponible, repli sur tar)");
+  } catch (err) {
+    say(`  (extract-zip a échoué : ${err.message?.split("\n")[0] ?? "raison inconnue"})`);
   }
-  await run("tar", ["-xf", archive, "-C", dest]);
+
+  const septZ = onWindows ? ["C:/Program Files/7-Zip/7z.exe", "7z"] : ["7z", "7za", "7zr"];
+  for (const commande of [...septZ, "unzip"]) {
+    try {
+      const args =
+        commande === "unzip"
+          ? ["-q", "-o", archive, "-d", dest]
+          : ["x", archive, `-o${dest}`, "-y"];
+      await run(commande, args);
+      return;
+    } catch {
+      // extracteur suivant
+    }
+  }
+  throw new Error(
+    `Impossible de decompresser ${path.basename(archive)} : ni extract-zip, ` +
+      `ni 7z, ni unzip n'ont reussi.`,
+  );
 }
 
 /**
@@ -200,7 +378,7 @@ export async function extractZip(archive, dest) {
  */
 export async function extract7z(archive, dest) {
   await fs.mkdir(dest, { recursive: true });
-  const candidates = isWindows
+  const candidates = onWindows
     ? ["C:/Program Files/7-Zip/7z.exe", "7z"]
     : ["7z", "7za", "7zr"];
   let lastError;
@@ -227,21 +405,39 @@ export async function extractAny(archive, dest) {
 }
 
 /**
- * Racine d'une archive extraite.
+ * Racine d'une archive extraite : le dossier qui contient `marker`.
  *
- * python-build-standalone en `install_only` extracte directement a la racine
- * (pas de dossier intermediaire) ; llama.cpp en a un. On detecte lequel des
- * deux est correct plutot que de deviner.
+ * Les archives n'ont pas toutes la meme profondeur, et c'est la source d'un
+ * echec Builds silencieux :
+ * - `python-build-standalone` en `install_only` extracte a la racine ;
+ * - llama.cpp place l'executable dans `<dossier>/bin/`, soit un niveau ;
+ * - les builds ffmpeg de BtbN (Windows) font `<dossier>/bin/ffmpeg.exe`, soit
+ *   DEUX niveaux.
+ *
+ * Une recherche limitee a un seul niveau trouvait donc la racine de l'archive
+ * ffmpeg sans jamais voir le binaire, et `fetch-bin.mjs` concluait « absent
+ * apres extraction » alors que l'archive etait parfaitement correcte.
+ *
+ * La recherche est en largeur et bornee a {@link PROFONDEUR_MAX}, pour renvoyer
+ * le match le plus proche de la racine — deux binaires ne portant pas le meme
+ * nom dans la meme archive, et l'ordre du `readdir` n'etant pas garanti, on se
+ * tient a la profondeur minimale pour rester deterministe.
  */
+const PROFONDEUR_MAX = 3;
+
 export async function archiveRoot(dir, marker) {
-  const direct = path.join(dir, marker);
-  if (await existsAsync(direct)) return dir;
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    if (await existsAsync(path.join(dir, entry.name, marker))) {
-      return path.join(dir, entry.name);
+  let niveau = [dir];
+  for (let profondeur = 0; profondeur <= PROFONDEUR_MAX; profondeur += 1) {
+    const suivants = [];
+    for (const courant of niveau) {
+      if (await existsAsync(path.join(courant, marker))) return courant;
+      const entries = await fs.readdir(courant, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        if (entry.isDirectory()) suivants.push(path.join(courant, entry.name));
+      }
     }
+    if (suivants.length === 0) break;
+    niveau = suivants;
   }
   return dir;
 }
@@ -323,7 +519,7 @@ export function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       stdio: "inherit",
-      ...(isWindows ? { shell: true } : {}),
+      ...(onWindows ? { shell: true } : {}),
       ...options,
     });
     child.on("error", reject);
