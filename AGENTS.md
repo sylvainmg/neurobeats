@@ -399,16 +399,41 @@ Un bon commentaire explique une décision tricky. Un mauvais répète le code.
   `build/YtDlp.js`, `build/index.js`, `build/index.d.ts`, `build/errors.js`,
   `build/types.d.ts` (codes erreur) + facade web `ExpoYtDlpModule.web.js`.
 
-### Auto-updater (contrat)
+### Mise à jour de yt-dlp : ce qui est VRAI (corrigé le 2026-09-27)
 
-- `updateYtDlp()` → `{action: "up_to_date" | "updated", version}`. Comparaison PEP 440
-  normalisée (`2026.08.19` == `2026.8.19`, PyPI normalise les zéros).
-- Codes : `BUSY` (un download actif), `UPDATE_NETWORK`, `UPDATE_FAILED`.
-- Wheel cible : `yt_dlp-<version-pypi>-py3-none-any.whl` ; ejs épinglé lu dans
-  `requires-dist` du METADATA (`yt-dlp-ejs==X.Y.Z`). SHA-256 vérifié avant unzip.
-- Déclencheur app : échec de transfert sur `NETWORK_ERROR` → `updateYtDlp()` en fond,
-  une seule tentative ; l'utilisateur est informé du résultat.
-- Rebuild du pin : depuis `$HOME/python` (cpython-build-standalone 3.13.2),
-  `./gradlew :library:publishToMavenLocal --no-daemon -x test`.
+**Il n'y a pas de mise à jour à chaud.** Ce paragraphe décrit ce qui aurait pu
+être fait ; rien de tout cela n'existe dans le code. Trois raisons, vérifiées :
+
+1. `updateYtDlp()` n'est exposée nulle part : ni la facade JavaScript
+   (`build/YtDlp.js`), ni ses types, ni les `AsyncFunction` du module Kotlin.
+2. Même câblée, elle ne ferait rien : le binaire embarqué expose
+   `updateYtDlp(context, callback)` et son implémentation appelle
+   immédiatement `onError("In-app yt-dlp update not supported")`.
+3. Elle a fait pire que rien. L'application l'appelait sur chaque
+   `NETWORK_ERROR` ; l'appel levait un `TypeError` **synchrone**, que le
+   `.catch()` accolé à la promesse ne pouvait pas attraper. L'exception
+   remontait de `siSourceStale` et empechait la ligne suivante de
+   `echouerTransfert` — `relancerDirect` — de s'exécuter. Autrement dit, ce
+   chemin supprimait la relance automatique des 403 et pannes réseau.
+
+**Le runtime est donc épinglé, et c'est le remède réel** : yt-dlp évolue avec
+l'application, dont la version est vérifiée contre le manifeste publié (voir
+`shared/update/README.md`). La relance automatique des pannes transitoires est
+le filet de sécurité, et c'est elle qui fonctionne.
+
+Ne pas réintroduire l'appel sans les trois couches, car il casserait de nouveau
+la relance. `mobile/src/transfer/__tests__/relanceDirecte.test.ts` contient
+trois garde-fous qui lisent les fichiers **publiés** du module et constatent que
+l'API n'existe pas : ils échoueront si l'on ajoute un `AsyncFunction` sans
+l'exposer, ou l'inverse.
+
+Rebuild du pin embarqué : depuis `$HOME/python` (cpython-build-standalone 3.13.2),
+`./gradlew :library:publishToMavenLocal --no-daemon -x test`.
+
+**Le pin n'est dans AUCUN dépôt** : il n'existe que dans `~/.m2` de la machine
+qui l'a compilé, et `$HOME/python` n'est pas versionné. Une CI ne peut donc pas
+construire l'APK tant que ce point n'est pas réglé. En attendant, l'APK se
+construit sur la machine qui porte le pin : c'est ce que fait
+`mobile/android/gradlew assembleRelease`.
 
 ---
