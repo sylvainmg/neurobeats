@@ -24,7 +24,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from core.config import BASE, FFMPEG, YDL_AUDIO_OPTS
+from core.config import BASE, FFMPEG, YDL_AUDIO_OPTS, sans_fenetre_console
 from services import covers
 
 # Dossier surchargeable : les tests le redirigent avant l'import du module, comme
@@ -310,7 +310,8 @@ def _codec_audio(source: str):
         sortie = subprocess.run(
             [ffprobe, "-v", "error", "-select_streams", "a:0",
              "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", source],
-            capture_output=True, text=True, timeout=30)
+            capture_output=True, text=True, timeout=30,
+            **sans_fenetre_console())
     except (OSError, subprocess.SubprocessError):
         return None
     return (sortie.stdout or "").strip() or None
@@ -339,7 +340,8 @@ def _duree_fichier(chemin_fichier: str):
         sortie = subprocess.run(
             [ffprobe, "-v", "error", "-show_entries", "format=duration",
              "-of", "default=nw=1:nk=1", chemin_fichier],
-            capture_output=True, text=True, timeout=20)
+            capture_output=True, text=True, timeout=20,
+            **sans_fenetre_console())
         texte = (sortie.stdout or "").strip()
         return round(float(texte)) if texte else None
     except (OSError, subprocess.SubprocessError, ValueError):
@@ -402,7 +404,8 @@ def remuxer(source: str, video_id: str, meta: dict, pochette: bytes | None = Non
             args += ["-metadata", f"{cle}={valeur}"]
     args.append(sortie)
     try:
-        sortie_ffmpeg = subprocess.run(args, capture_output=True, text=True, timeout=600)
+        sortie_ffmpeg = subprocess.run(args, capture_output=True, text=True, timeout=600,
+                                        **sans_fenetre_console())
     finally:
         if temporaire_image and os.path.exists(temporaire_image):
             try:

@@ -164,6 +164,11 @@ export function backendEnv(port: number): NodeJS.ProcessEnv {
   if (binDirs.length > 0) {
     env.PATH = [...binDirs, env.PATH || ""].join(path.delimiter);
   }
+  // Les flux du backend sont forces en UTF-8 par `main.py`, mais ses ENFANTS
+  // (yt-dlp, ffmpeg) heredent de l'environnement : sans cette variable, un
+  // titre contenant un emoji fait echouer l'ecriture du titre sur la page de
+  // code console — d'ou une erreur rouge a l'ecran au lieu d'un titre joue.
+  env.PYTHONIOENCODING = env.PYTHONIOENCODING || "utf-8";
   return env;
 }
 

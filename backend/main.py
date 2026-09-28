@@ -18,6 +18,36 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+
+def _forcer_utf8() -> None:
+    r"""Force UTF-8 tolerant sur les flux de sortie, avant tout import metier.
+
+    Windows pipe la sortie du processus vers l'application qui le lance, avec
+    l'encodage de la page de code console — cp1252 sur un poste francais. La
+    consequence reste invisible jusqu'a ce qu'un titre contienne un caractere
+    hors cp1252 : le `print` de confirmation de lecture contient un triangle
+    de lecture, et le lever alors `UnicodeEncodeError` **apres** que mpv joue
+    et **avant** l'ecriture de l'historique. Resultat : le son sort, mais
+    l'interface n'affiche aucun titre et l'appelant croit avoir echoue.
+
+    `errors="replace"` est l'essentiel : un caractere non representable doit
+    disparaitre du journal, jamais interrompre la lecture. Le `reconfigure` est
+    protege parce que `sys.stdout` peut etre remplace par un objet sans cette
+    methode (pytest, redirection vers un fichier).
+    """
+    for nom in ("stdout", "stderr"):
+        flux = getattr(sys, nom, None)
+        reconfigure = getattr(flux, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
+_forcer_utf8()
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

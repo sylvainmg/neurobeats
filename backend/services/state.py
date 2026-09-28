@@ -33,9 +33,25 @@ LAST_SEARCH: dict = {}    # derniere recherche (video_id -> meta)
 # autre instance NEUROBEATS_PORT=...) a son propre daemon mpv — deux backends
 # peuvent tourner côte à côte sans se voler le socket, et le reaping d'orphelins
 # (audio._reap_orphan_mpv) ne touche que les mpv liés à NOTRE socket.
-_MPV_SOCK = os.path.join(
-    tempfile.gettempdir(), f"neurobeats-mpv-{os.environ.get('NEUROBEATS_PORT', '8000')}.sock"
-)
+def _mpv_ipc_path() -> str:
+    """Chemin du canal IPC de mpv, adapte a la plate-forme.
+
+    mpv n'expose son canal que sous deux formes : un socket Unix, ou un **named
+    pipe** sous Windows. Ce dernier n'est pas un chemin de systeme de fichiers :
+    `os.path.exists` y renvoie toujours False et il ne se supprime pas avec
+    `unlink`. Un seul format ne peut donc pas servir les deux — et
+    `socket.AF_UNIX` n'existe pas sur Windows, ou le backend demarre en echouant.
+
+    Le nom reste derive du port, pour la meme raison qu'ailleurs : deux backends
+    doivent avoir deux canaux distincts.
+    """
+    nom = f"neurobeats-mpv-{os.environ.get('NEUROBEATS_PORT', '8000')}"
+    if os.name == "nt":
+        return rf"\\.\pipe\{nom}"
+    return os.path.join(tempfile.gettempdir(), f"{nom}.sock")
+
+
+_MPV_SOCK = _mpv_ipc_path()
 _mpv_daemon: subprocess.Popen | None = None
 _mpv_ipc_lock = threading.Lock()
 _mpv_ipc_seq = 1

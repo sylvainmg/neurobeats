@@ -33,6 +33,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from core.config import sans_fenetre_console
+
 from services.state import _tprint
 
 # ------------------------------------------------------------------- repertoire modeles
@@ -221,7 +223,8 @@ def _gpu_info() -> dict | None:
         for cmd, vendor in ((("nvidia-smi", "--query-gpu=name,memory.total",
                               "--format=csv,noheader,nounits"), "nvidia"),
                             (("rocm-smi", "--showmeminfo", "vram"), "amd")):
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=8,
+                                 **sans_fenetre_console())
             if out.returncode != 0 or not out.stdout.strip():
                 continue
             if vendor == "nvidia":
@@ -681,6 +684,7 @@ def _new_worker_process(payload: dict[str, Any]) -> Any:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         close_fds=True,
+        **sans_fenetre_console(),
     )
 
 
@@ -1868,6 +1872,7 @@ def ensure_embedded(model_id: str) -> str:
                     stdout=log_handle or subprocess.DEVNULL,
                     stderr=subprocess.STDOUT,
                     close_fds=True,
+                    **sans_fenetre_console(),
                 )
             except OSError as exc:
                 last_error = exc

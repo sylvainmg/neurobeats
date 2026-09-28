@@ -70,6 +70,10 @@ export function spawnBackend(port: number, onLog: LogSink): ChildProcess {
     env: backendEnv(port),
     stdio: ["ignore", "pipe", "pipe"],
     detached: true, // groupe de process propre → killTree(-pid) à la sortie
+    // `python.exe` est un binaire console : sans ceci, Windows ouvre une
+    // fenetre noire a chaque demarrage du moteur — et une a chaque relance
+    // apres un crash. La sortie est deja capturee par les pipes.
+    windowsHide: true,
   });
   pipeLogs(proc, onLog);
   return proc;

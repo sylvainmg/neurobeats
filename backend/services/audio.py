@@ -12,6 +12,7 @@ from yt_dlp import YoutubeDL
 from core.config import (
     MPV_BASE_ARGS, STREAM_CACHE_PATH, STREAM_CACHE_TTL,
     YDL_AUDIO_OPTS, YDL_CLIENT_SETS, VIDEO_ID_RE,
+    sans_fenetre_console,
 )
 from services import audiocache, state
 from services.db_access import _meta, hist_append, hist_read
@@ -204,12 +205,77 @@ def _take_prefetch(video_id: str, wait: float = 0.0) -> str | None:
         return None
 
 
+def _premiere_reponse(buf: bytes, rid: int) -> dict | None:
+    """Extrait de la ligne JSON correspondant a notre requete.
+
+    mpv peut renvoyer d'autres messages (evenements) dans le meme tampon : on ne
+    garde que celui qui porte notre `request_id`, ou le premier qui signale une
+    erreur — ce qui est la reponse d'une commande sans identifiant-echo.
+    """
+    for line in buf.decode(errors="replace").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if msg.get("request_id") == rid or "error" in msg:
+            return msg
+    return None
+
+
+def _ipc_send_windows(payload: str, rid: int, timeout: float) -> dict | None:
+    r"""Envoie une commande par le named pipe de mpv (Windows).
+
+    Windows n'a pas de socket AF_UNIX : mpv y expose son IPC par un **named
+    pipe**, que Python ouvre comme un fichier ordinaire
+    (`\\.\pipe\nom`). C'est le seul moyen de parler a mpv sous Windows.
+
+    Deuxifferences avec le socket Unix, et deux pieges :
+    - `open` echoue tant que le pipe n'existe pas (le daemon n'est pas pret) : on
+      laisse remonter l'OSError, rattrape par l'appelant, qui reessaie.
+    - un pipe en mode message livre des blocs, pas un flux : on lit par
+      morceaux jusqu'a avoir une ligne complete, avec une limite de temps pour ne
+      pas bloquer sur une reponse qui ne viendrait jamais.
+    """
+    try:
+        fh = open(state._MPV_SOCK, "r+b", buffering=0)
+    except OSError:
+        return None
+    try:
+        fh.write(payload.encode())
+        buf = b""
+        limite = time.monotonic() + timeout
+        while b"\n" not in buf:
+            if time.monotonic() > limite:
+                return None
+            morceau = fh.read(4096)
+            if not morceau:
+                # Un pipe ferme cote mpv : plus rien n'arrivera, on sort plutot
+                # que d'epuiser le delai.
+                break
+            buf += morceau
+    except OSError:
+        return None
+    finally:
+        try:
+            fh.close()
+        except OSError:
+            pass
+    return _premiere_reponse(buf, rid)
+
+
 def _ipc_send(cmd: list, timeout: float = 5.0) -> dict | None:
     """Envoie une commande JSON-IPC au daemon mpv, retourne la reponse {error, data, request_id}."""
     with state._mpv_ipc_lock:
         state._mpv_ipc_seq += 1
         rid = state._mpv_ipc_seq
         payload = json.dumps({"command": cmd, "request_id": rid}) + "\n"
+
+    if os.name == "nt":
+        return _ipc_send_windows(payload, rid, timeout)
+
     try:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.settimeout(timeout)
@@ -224,19 +290,9 @@ def _ipc_send(cmd: list, timeout: float = 5.0) -> dict | None:
                 buf += chunk
         finally:
             s.close()
-        for line in buf.decode(errors="replace").splitlines():
-            line = line.strip()
-            if not line.startswith("{"):
-                continue
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if msg.get("request_id") == rid or "error" in msg:
-                return msg
     except (OSError, socket.timeout):
         return None
-    return None
+    return _premiere_reponse(buf, rid)
 
 
 def _mpv_ready() -> bool:
@@ -252,6 +308,9 @@ def _reap_orphan_mpv():
     sur le socket.
     """
     marker = f"--input-ipc-server={state._MPV_SOCK}"
+    if os.name == "nt":
+        _reap_orphan_mpv_windows(marker)
+        return
     try:
         entries = os.listdir("/proc")
     except OSError:
@@ -281,6 +340,54 @@ def _reap_orphan_mpv():
                 pass
 
 
+def _reap_orphan_mpv_windows(marker: str) -> None:
+    """Termine les mpv orphelins sous Windows.
+
+    Sous Unix, les orphelins se trouvent en lisant `/proc/<pid>/cmdline`. Il
+    n'y a pas d'equivalent de `/proc` sous Windows, et l'enumeration se fait par
+    CIM — un appel interprocessus d'une seconde ou deux. C'est acceptable ici
+    parce que ce chemin ne s'execute qu'une fois, au demarrage, et seulement si
+    le daemon n'est pas deja vivant.
+
+    On filtre sur la ligne de commande ET sur le nom du processus : sans cela, la
+    premiere condition est vraie pour tout mpv lance par l'utilisateur, et
+    `_reap_orphan_mpv` tuerait son lecteur. C'est la meme garantie que sur Unix,
+    ou le marqueur d'arguments joue ce role.
+    """
+    ps = (
+        "$ErrorActionPreference='SilentlyContinue';"
+        "Get-CimInstance Win32_Process -Filter \"Name='mpv.exe' or Name='mpv.com'\" |"
+        "ForEach-Object { $_.ProcessId.ToString() + '|' + $_.CommandLine }"
+    )
+    try:
+        sortie = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=8,
+            **sans_fenetre_console(),
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        # Sans Powershell, on renonce a reaprer : l'echec sera sans consequence
+        # fonctionnelle, un orphan en trop n'empeche pas le lecteur de tourner.
+        return
+    for ligne in sortie.splitlines():
+        pid, _, commande = ligne.partition("|")
+        pid = pid.strip()
+        if not pid.isdigit() or marker not in commande:
+            continue
+        try:
+            # `taskkill` et non `os.kill` : sous Windows, `signal.SIGKILL` n'existe
+            # pas (le module `signal` n'en definit qu'une poignee), si bien que le
+            # chemin POSIX lèverait une AttributeError au lieu de tuer quoi que ce
+            # soit.
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", pid],
+                capture_output=True, timeout=5,
+                **sans_fenetre_console(),
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+
+
 def _ensure_daemon() -> bool:
     """Lance le daemon mpv persistant si absent. Retourne True si le socket repond.
 
@@ -293,16 +400,21 @@ def _ensure_daemon() -> bool:
             return True
     _shutdown_daemon()
     _reap_orphan_mpv()
-    try:
-        if os.path.exists(state._MPV_SOCK):
-            os.unlink(state._MPV_SOCK)
-    except OSError:
-        pass
+    # Un named pipe n'est pas un chemin de systeme de fichiers : ni `exists` ni
+    # `unlink` n'ont de sens dessus. Le canal disparait avec le processus mpv qui
+    # le cree, et `_reap_orphan_mpv` a deja degage le terrain avant.
+    if os.name != "nt":
+        try:
+            if os.path.exists(state._MPV_SOCK):
+                os.unlink(state._MPV_SOCK)
+        except OSError:
+            pass
     try:
         state._mpv_daemon = subprocess.Popen(
             MPV_BASE_ARGS + ["--idle=yes", f"--input-ipc-server={state._MPV_SOCK}",
                              "--prefetch-playlist=yes", "--gapless-audio=yes"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **sans_fenetre_console(),
         )
     except FileNotFoundError:
         state._mpv_daemon = None
@@ -329,11 +441,15 @@ def _shutdown_daemon():
             old.kill()
     # mpv ne retire pas toujours son chemin IPC lorsqu'il reçoit SIGTERM ;
     # supprimer ce fichier évite qu'une relance le interprète comme un socket actif.
-    try:
-        if os.path.exists(state._MPV_SOCK):
-            os.unlink(state._MPV_SOCK)
-    except OSError:
-        pass
+    # Un named pipe n'est pas un chemin de systeme de fichiers : ni `exists` ni
+    # `unlink` n'ont de sens dessus. Le canal disparait avec le processus mpv qui
+    # le cree, et `_reap_orphan_mpv` a deja degage le terrain avant.
+    if os.name != "nt":
+        try:
+            if os.path.exists(state._MPV_SOCK):
+                os.unlink(state._MPV_SOCK)
+        except OSError:
+            pass
 
 
 def _ipc_event_loop():

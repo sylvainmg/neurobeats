@@ -14,7 +14,9 @@ import re
 import shutil
 import subprocess
 
-from core.config import FFMPEG, YDL_CLIENT_SETS, YDL_INFO_OPTS, YDL_VIDEO_OPTS
+from core.config import (
+    FFMPEG, YDL_CLIENT_SETS, YDL_INFO_OPTS, YDL_VIDEO_OPTS, sans_fenetre_console,
+)
 
 # Bornes larges mais fermes : une frame = quelques centaines de Ko a lire, donc
 # ces delais ne sont atteints que si le reseau stagne (on abandonne alors).
@@ -50,7 +52,8 @@ def _run(args: list, timeout: float):
         return None
     try:
         result = subprocess.run([FFMPEG, "-hide_banner", *args],
-                                capture_output=True, text=True, timeout=timeout)
+                                capture_output=True, text=True, timeout=timeout,
+                                **sans_fenetre_console())
     except (subprocess.TimeoutExpired, OSError) as exc:
         print(f"  [frame] ffmpeg injoignable : {type(exc).__name__}", flush=True)
         return None
@@ -163,7 +166,8 @@ def size(path: str):
         res = subprocess.run(
             [probe, "-v", "error", "-select_streams", "v:0",
              "-show_entries", "stream=width,height", "-of", "csv=p=0", path],
-            capture_output=True, text=True, timeout=10)
+            capture_output=True, text=True, timeout=10,
+            **sans_fenetre_console())
         width, height = res.stdout.strip().split(",")
         return int(width), int(height)
     except Exception:

@@ -120,6 +120,26 @@ COVERS_MATCH_MIN = 0.80
 COVERS_SSIM_MIN = 0.55
 FFMPEG = shutil.which("ffmpeg") or ""
 
+# CREATE_NO_WINDOW : sans ce drapeau, chaque binaire console demarre par le
+# backend (mpv, ffmpeg, llama-server) ouvre sa propre fenetre noire sur le
+# bureau de l'utilisateur. C'est visible a chaque lecture, chaque pochette
+# calculee, chaque modele charge — et l'utilisateur ne peut ni les fermer
+# proprement ni savoir ce qu'elles sont.
+_CREATE_NO_WINDOW = 0x08000000
+
+
+def sans_fenetre_console() -> dict:
+    """Options de sous-processus interdisant l'ouverture d'une console Windows.
+
+    A passer en mot-cle a chaque `subprocess.Popen` / `subprocess.run` qui lance
+    un binaire du bundle. Le drapeau n'a pas de sens hors Windows : on ne le
+    fournit donc pas plutot que de le fournir pour rien, ce qui ferait dependre
+    chaque appel de la plate-forme.
+    """
+    if os.name != "nt":
+        return {}
+    return {"creationflags": _CREATE_NO_WINDOW}
+
 # --- Paroles -----------------------------------------------------------------
 # Deux delais de patience distincts : une paroles trouvee ne change quasi jamais
 # (TTL long), alors qu'une absence est temporaire le plus souvent (LRCLIB enrichi,
@@ -174,8 +194,38 @@ YDL_VIDEO_OPTS = {
                                    "skip": ["hls"]}},
 }
 
+def _mpv_executable() -> str:
+    """Nom du binaire mpv a lancer.
+
+    Sous Windows, le zip publie par shinchiro contient les DEUX formes du meme
+    binaire : `mpv.exe`, en sous-systeme **graphique**, et `mpv.com`, en
+    sous-systeme **console**. Un binaire graphique se detache de la sortie
+    standard, or c'est exactement d'elle que le backend lit la progression
+    (`--msg-level=all=status` conserve les lignes « A: 00:00:xx » malgre
+    `--really-quiet`). Lancer `mpv.exe` produirait donc un daemon muet, sans que
+    rien ne signale l'absence d'avancement.
+
+    Sous Unix il n'existe qu'un binaire, et il est en sous-systeme console.
+    """
+    if os.name != "nt":
+        return "mpv"
+    trouve = shutil.which("mpv.com")
+    if trouve:
+        return trouve
+    # `mpv.com` n'est peut-etre pas dans le PATH lui-meme, mais il est pose a
+    # cote de `mpv.exe`, qui lui y est (c'est lui que le packaging met dans
+    # `resources/bin`, ajoute au PATH par le parent). Chercher le voisin evite
+    # un daemon muet.
+    exe = shutil.which("mpv.exe")
+    if exe:
+        voisin = os.path.join(os.path.dirname(exe), "mpv.com")
+        if os.path.exists(voisin):
+            return voisin
+    return "mpv.exe"
+
+
 MPV_BASE_ARGS = [
-    "mpv", "--no-video", "--vid=no", "--audio-display=no", "--really-quiet",
+    _mpv_executable(), "--no-video", "--vid=no", "--audio-display=no", "--really-quiet",
     "--msg-level=all=status",  # garde "A: 00:00:xx" sur stdout malgre --really-quiet
     "--profile=low-latency",
     "--demuxer-readahead-secs=1", "--demuxer-max-bytes=4MiB",
